@@ -24,6 +24,7 @@ import agentPanelAuthzRoutes from './management/agent-panel-authz.js';
 import domainRoutes from './management/domains.js';
 import peersRoutes from './management/peers.js';
 import nativeAppsRoutes from './management/native-apps.js';
+import mailRoutes from './management/mail.js';
 
 export default async function managementRoutes(fastify, _opts) {
   fastify.addHook('onRequest', managementOnly());
@@ -53,4 +54,5 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(domainRoutes);
   await fastify.register(peersRoutes);
   await fastify.register(nativeAppsRoutes);
+  await fastify.register(mailRoutes);
 }

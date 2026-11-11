@@ -14,11 +14,13 @@
 | 9090 | `127.0.0.1` | chisel                       | TCP      | Chisel tunnel server (WebSocket)                        |
 | 9091 | `127.0.0.1` | authelia                     | TCP      | Authelia authentication server                          |
 | 9294 | `127.0.0.1` | lamalibre-lamaste-gatekeeper | TCP      | Tunnel authorization (auth_request target)              |
+| 9295 | `127.0.0.1` | lamalibre-lamaste-serverd    | TCP      | Mail submission listener — Authelia's notifier (4.14)   |
 
 **Key points:**
 
 - Only nginx listens on public interfaces (`0.0.0.0`)
 - All backend services bind to `127.0.0.1` — they are never directly accessible from the internet
+- Port 9295 listens only while the relay has a mail transport: the panel's own SMTP listener (implicit TLS, a local CA) to which Authelia submits its mail — see [Mail](../02-guides/mail.md)
 - Port 9292 is the emergency fallback — it works even if your domain is lost or DNS breaks
 - The UFW firewall only allows ports 22, 80, 443, and 9292. Port 80 serves Let's Encrypt HTTP-01 challenges and otherwise redirects every request to HTTPS (`lamalibre-lamaste-http-redirect`)
 
@@ -33,6 +35,7 @@ A tunnel's port is also a loopback port on the relay: its vhost proxies to `127.
 | 9091 | Authelia                |
 | 9292 | IP-based panel listener |
 | 9294 | Gatekeeper              |
+| 9295 | Mail submission         |
 
 A tunnel on one of them would publish that internal service on a public hostname. For the panel that is an administrator takeover, not a leak: the panel trusts the client-certificate headers nginx sets. `RESERVED_TUNNEL_PORTS` in `@lamalibre/lamaste` is enforced by the request schema, inside the tunnel workflow, and again when the Chisel grants are rendered. Tunnel ports must also be 1024–65535.
 
@@ -221,7 +224,7 @@ sudo systemctl status nginx chisel authelia lamalibre-lamaste-serverd lamalibre-
 **Check which ports are listening:**
 
 ```bash
-sudo ss -tlnp | grep -E ':(22|80|443|3100|9090|9091|9292|9294)\s'
+sudo ss -tlnp | grep -E ':(22|80|443|3100|9090|9091|9292|9294|9295)\s'
 ```
 
 **Check disk usage of Lamaste directories:**

@@ -94,6 +94,11 @@
           "file": "02-guides/second-domain.md"
         },
         {
+          "title": "Mail",
+          "slug": "mail",
+          "file": "02-guides/mail.md"
+        },
+        {
           "title": "Desktop App Setup",
           "slug": "desktop-app-setup",
           "file": "02-guides/desktop-app-setup.md"
@@ -227,6 +232,11 @@
           "title": "Domains API",
           "slug": "api-domains",
           "file": "04-api-reference/domains.md"
+        },
+        {
+          "title": "Mail API",
+          "slug": "mail-api",
+          "file": "04-api-reference/mail.md"
         },
         {
           "title": "Certificates API",

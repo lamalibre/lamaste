@@ -459,7 +459,7 @@ See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 - Thin shim over `@lamalibre/lamaste/server`: per-agent credentials in `chisel-credentials.json` (0600)
 - Renders the authfile `chisel-users` from the credentials and `tunnels.json`: each `agent-<label>` may bind exactly `^R:127\.0\.0\.1:<port>$` for its enabled tunnels
 - Adds the `lamaste-no-grants` sentinel user (password in `chisel-sentinel`, 0600) so the authfile is never empty — Chisel disables authentication on an empty authfile
-- Never grants a reserved port (3100, 9090, 9091, 9292, 9294) or a port claimed by two tunnels
+- Never grants a reserved port (3100, 9090, 9091, 9292, 9294, 9295) or a port claimed by two tunnels
 - Writes the authfile itself, no sudo: `0600` temp file → `chgrp lamaste-chisel` → `chmod 0640` → fsync → rename. The serverd unit has `SupplementaryGroups=lamaste-chisel`
 - Reports whether each render `revoked` something; the caller decides on the restart
 

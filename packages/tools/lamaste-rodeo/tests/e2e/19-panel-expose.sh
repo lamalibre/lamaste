@@ -525,7 +525,7 @@ else
 fi
 
 # The relay's own service ports cannot carry an agent panel either
-for reserved_port in 3100 9090 9091 9292 9294; do
+for reserved_port in 3100 9090 9091 9292 9294 9295; do
   RESERVED_EXPOSE_STATUS=$(agent_api_post_status "tunnels/expose-panel" "{\"port\":${reserved_port}}")
   assert_eq "$RESERVED_EXPOSE_STATUS" "400" "expose-panel on reserved port ${reserved_port} rejected (HTTP 400)" || true
 done

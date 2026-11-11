@@ -303,7 +303,7 @@ server {
 
 The `location /internal/lamaste/authz` block is marked `internal`, meaning it cannot be accessed directly by clients. It is only triggered by the `auth_request` directive in the main `location /` block.
 
-The `127.0.0.1:PORT` target is also why a tunnel can never use the port of a Lamaste service (3100, 9090, 9091, 9292, 9294): that vhost would publish the internal service. For the panel it would be worse than a leak, because the panel trusts the `X-SSL-Client-*` headers nginx sets as proof of a client certificate — which is also why tunnel vhosts always clear them.
+The `127.0.0.1:PORT` target is also why a tunnel can never use the port of a Lamaste service (3100, 9090, 9091, 9292, 9294, 9295): that vhost would publish the internal service. For the panel it would be worse than a leak, because the panel trusts the `X-SSL-Client-*` headers nginx sets as proof of a client certificate — which is also why tunnel vhosts always clear them.
 
 `client_max_body_size` comes from the tunnel's `maxBodySizeMb` (1–10240 MiB, default 10; an agent may set at most 100). Requests above it get HTTP 413. Tunnels created before the setting existed carry no directive and so nginx's built-in 1 MiB limit, until a body limit is set on them (`PATCH /api/tunnels/:id` with `maxBodySizeMb`, or **Edit** in the panel). `127.0.0.1:PORT` is the listener Chisel opens on the server for the tunnel's carrying agent — see [Tunneling](tunneling.md#ownership-and-grants).
 

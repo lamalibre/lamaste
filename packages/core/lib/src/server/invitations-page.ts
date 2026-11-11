@@ -10,9 +10,15 @@
  * its path — and nothing else from its URL, so a plugin cannot prefill it —
  * and talks to `/api/delegated-invitations/<route>` on its own host
  * (`GET` the roles the person may give and their own invitations, `POST` a
- * new one, `DELETE` a pending one), with `fetch`'s default mode, which
- * sends the `Origin` the panel checks. A new invitation's link is shown
- * once, with a copy button: the person sends it through their own mail.
+ * new one, `POST …/<id>/reissue` a new link for an open one, `DELETE` a
+ * pending one), with `fetch`'s default mode, which sends the `Origin` the
+ * panel checks. Where the plugin's domain can send mail, a made or
+ * reissued invitation is only mailed (mail-design.md §6.1): the answer
+ * carries no link, and the page says what became of the mail — "New link"
+ * mails it again. Where the domain cannot send, the link is shown once,
+ * with a copy button, and the person sends it. A name that reads as a link
+ * or a host name is refused before it is sent (core
+ * `looksLikeLinkOrHostname`, which the panel applies too).
  * Without a session the page links to the domain's sign-in, coming back to
  * itself (built from `location.origin` and the checked route, never from the
  * query).
@@ -26,6 +32,7 @@
  */
 
 import { AUTH_BRANDING_THEMES } from '../auth-branding.js';
+import { DISPLAY_NAME_LINK_PATTERN } from '../text-rules.js';
 import { INVITATIONS_PAGE_KEYS, pageMessage, pageMessagesFor } from '../page-messages.js';
 import type { PageLanguage } from '../page-messages.js';
 import { AUTH_PAGE_SCRIPT_WORDS, authPageHeaders, authPageShell } from './auth-pages.js';
@@ -39,6 +46,7 @@ export const INVITATIONS_PAGE_SCRIPT = String.raw`
       var ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
       var ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      var NAME_LINK_RE = new RegExp(${JSON.stringify(DISPLAY_NAME_LINK_PATTERN)}, 'iu');
       var STATUS_KEYS = { 404: 'error.not_found', 429: 'error.tooManyRequests' };
       // Loading the page: a refusal no code names is the page's, not an action's.
       var LOAD_KEYS = { 429: 'error.tooManyRequests', fallback: 'invitations.loadFailed' };
@@ -54,9 +62,12 @@ ${AUTH_PAGE_SCRIPT_WORDS}
       var api = '/api/delegated-invitations/' + route;
       var signIn = window.location.origin + '/?rd=' +
         encodeURIComponent(window.location.origin + '/invitations/' + route);
-      // The link of the invitation just made, shown until it is revoked.
+      // The invitation just made or given a new link: its link when the
+      // panel answered one (the domain sends no mail), what became of its
+      // mail — shown until it is revoked.
       var link = null;
       var linkId = null;
+      var linkMail = null;
 
       load();
 
@@ -170,7 +181,9 @@ ${AUTH_PAGE_SCRIPT_WORDS}
         if (name !== '') body.displayName = name;
         errorDiv.innerHTML = '';
         var invalid = body.email === '' ? msg('invitations.emailRequired')
-          : !EMAIL_RE.test(body.email) ? msg('invitations.emailInvalid') : null;
+          : !EMAIL_RE.test(body.email) ? msg('invitations.emailInvalid')
+          : NAME_LINK_RE.test(name.replace(/[\u3002\uff0e\uff61]/g, '.')) ? msg('invitations.nameLooksLikeLink')
+          : null;
         if (invalid !== null) {
           errorDiv.innerHTML = '<div class="error-msg">' + text(invalid) + '</div>';
           return;
@@ -184,9 +197,7 @@ ${AUTH_PAGE_SCRIPT_WORDS}
               errorDiv.innerHTML = '<div class="error-msg">' + text(refusal(answer.status, answer.data, STATUS_KEYS, 'create')) + '</div>';
               return;
             }
-            link = typeof answer.data.inviteUrl === 'string' && answer.data.inviteUrl.indexOf('https://') === 0
-              ? answer.data.inviteUrl : null;
-            linkId = answer.data.invitation && answer.data.invitation.id;
+            keepLink(answer.data);
             document.getElementById('invite-form').reset();
             refresh(null);
           })
@@ -196,11 +207,24 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           });
       }
 
+      // A made or reissued invitation, from the panel's answer: its link
+      // only when the domain sends no mail.
+      function keepLink(data) {
+        link = typeof data.inviteUrl === 'string' && data.inviteUrl.indexOf('https://') === 0
+          ? data.inviteUrl : null;
+        linkId = data.invitation && data.invitation.id;
+        linkMail = data.mail && typeof data.mail.status === 'string' ? data.mail.status : null;
+      }
+
       function showResult() {
         var result = document.getElementById('result');
         if (!result) return;
         if (link === null) {
-          result.innerHTML = '';
+          // Mailed, or not: never a link — "New link" mails it again.
+          result.innerHTML = linkId === null || linkMail === null ? '' :
+            '<div class="error-msg note-msg"><p>' +
+              text(msg(linkMail === 'sent' ? 'invitations.mailed' : 'invitations.mailFailed')) +
+            '</p></div>';
           return;
         }
         result.innerHTML =
@@ -253,10 +277,18 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           var who = inv.email || inv.displayName || '—';
           var when = inv.status === 'accepted' ? formatDate(inv.acceptedAt) : formatDate(inv.expiresAt);
           var status = has('status.' + inv.status) ? msg('status.' + inv.status) : inv.status;
+          var open = inv.status === 'pending' || inv.status === 'expired';
+          var mailed = open && inv.mail ? inv.mail.status : null;
+          var mailLine = mailed === 'sent' ? msg('invitations.mailSent')
+            : mailed === 'failed' || mailed === 'deferred-budget' ? msg('invitations.mailNotSent') : null;
           line.innerHTML =
             '<span class="detail-label">' + text(who) + '<br>' + text(inv.roleLabel) + '</span>' +
             '<span class="detail-value">' + text(status) +
-              '<br><span class="muted">' + text(when) + '</span></span>';
+              '<br><span class="muted">' + text(when) + '</span>' +
+              (mailLine ? '<br><span class="muted">' + text(mailLine) + '</span>' : '') + '</span>';
+          if (open && ID_RE.test(inv.id)) {
+            line.appendChild(reissueButton(inv));
+          }
           if (inv.status === 'pending' && ID_RE.test(inv.id)) {
             var revoke = document.createElement('button');
             revoke.type = 'button';
@@ -290,6 +322,35 @@ ${AUTH_PAGE_SCRIPT_WORDS}
           }
           rows.appendChild(line);
         });
+      }
+
+      // A new link for an open invitation (an expired one too): the old one
+      // stops working, so two clicks, as revoking takes.
+      function reissueButton(inv) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-outline btn-small';
+        button.textContent = msg('invitations.reissue');
+        button.addEventListener('click', function () {
+          if (button.getAttribute('data-confirm') !== 'yes') {
+            button.setAttribute('data-confirm', 'yes');
+            button.textContent = msg('invitations.reallyReissue');
+            return;
+          }
+          button.disabled = true;
+          request('POST', api + '/' + inv.id + '/reissue')
+            .then(function (answer) {
+              if (answer.status === 401) return showSignIn();
+              if (answer.status === 200) keepLink(answer.data);
+              refresh(answer.status === 200 ? null : refusal(answer.status, answer.data, STATUS_KEYS));
+            })
+            .catch(function () {
+              button.disabled = false;
+              button.removeAttribute('data-confirm');
+              button.textContent = msg('invitations.reissue');
+            });
+        });
+        return button;
       }
     })();
   `;

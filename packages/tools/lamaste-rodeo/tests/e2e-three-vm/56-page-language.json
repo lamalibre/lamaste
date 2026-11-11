@@ -3503,7 +3503,24 @@
         },
         {
           "id": "step-224",
-          "label": "auth.${DOMAIN_3}/brand.css: 404",
+          "label": "Set CSS_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "page_of \"${DOMAIN_3}\" /brand.css"
+          },
+          "capture": [
+            {
+              "variable": "CSS_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-225",
+          "label": "auth.${DOMAIN_3}/brand.css: the stock stylesheet (4.13)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -3512,18 +3529,39 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")"
+                "template": "$(visit_status \"${CSS_C}\")"
               },
               "expected": {
                 "kind": "literal",
-                "value": "404"
+                "value": "200"
               },
-              "message": "auth.${DOMAIN_3}/brand.css: 404"
+              "message": "auth.${DOMAIN_3}/brand.css: the stock stylesheet (4.13)"
             }
           }
         },
         {
-          "id": "step-225",
+          "id": "step-226",
+          "label": "…without the language rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"${CSS_C}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "#language-button"
+              },
+              "message": "…without the language rule"
+            }
+          }
+        },
+        {
+          "id": "step-227",
           "label": "The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null",
           "target": "local",
           "continueOnError": true,
@@ -3544,7 +3582,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-228",
           "label": "…for ${DOMAIN_3}, null → en, then en → null",
           "target": "local",
           "continueOnError": true,
@@ -3565,7 +3603,7 @@
           }
         },
         {
-          "id": "step-227",
+          "id": "step-229",
           "label": "Clearing the languages restarted no Authelia",
           "target": "local",
           "continueOnError": true,
@@ -3586,7 +3624,7 @@
           }
         }
       ],
-      "bash": "log_section \"B and C back to unset\"\n\n# The plugin's registry credential (OIDC) restarted Authelia in section 4:\n# what counts here is that clearing the languages does not.\nAUTHELIA_PID=$(authelia_pid)\nRESP=$(set_language \"${DOMAIN_2}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true null 0\" \"PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning\" || true\nif wait_for 60 index_lacks \"${DOMAIN_2}\" \"data-authelia-lang\"; then\n  log_pass \"auth.${DOMAIN_2}/: lang no longer rewritten\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ still rewrites lang\"\nfi\nassert_not_eq \"$(loading_of \"${DOMAIN_2}\" de-AT)\" \"Yükleniyor\" \"…its de-AT locale is no longer the forced Turkish\" || true\nassert_not_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\" \"#language-button\" \"…its menu shown again (brand.css without the rule)\" || true\nINVITE_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\")\nassert_contains \"${INVITE_B}\" '<html lang=\"en\">' \"…its invitation page in English\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Accept Invitation</title>\" \"…with its brand\" || true\nRESP=$(set_language \"${DOMAIN_3}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"true null\" \"${DOMAIN_3} cleared\" || true\nif wait_for 90 rendering_gone \"${DOMAIN_3}\"; then\n  log_pass \"…its language-only rendering is gone\"\nelse\n  log_fail \"…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nassert_eq \"$(visit_status \"$(page_of \"${DOMAIN_3}\" /brand.css)\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404\" || true\nassert_eq \"$(language_audit \"${DOMAIN_2}\")\" \"null tr,tr null\" \"The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null\" || true\nassert_eq \"$(language_audit \"${DOMAIN_3}\")\" \"null en,en null\" \"…for ${DOMAIN_3}, null → en, then en → null\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Clearing the languages restarted no Authelia\" || true"
+      "bash": "log_section \"B and C back to unset\"\n\n# The plugin's registry credential (OIDC) restarted Authelia in section 4:\n# what counts here is that clearing the languages does not.\nAUTHELIA_PID=$(authelia_pid)\nRESP=$(set_language \"${DOMAIN_2}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language) \\(.warnings // [] | length)\"' \"true null 0\" \"PUT /api/domains/${DOMAIN_2}/language {language: null}: cleared, no warning\" || true\nif wait_for 60 index_lacks \"${DOMAIN_2}\" \"data-authelia-lang\"; then\n  log_pass \"auth.${DOMAIN_2}/: lang no longer rewritten\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ still rewrites lang\"\nfi\nassert_not_eq \"$(loading_of \"${DOMAIN_2}\" de-AT)\" \"Yükleniyor\" \"…its de-AT locale is no longer the forced Turkish\" || true\nassert_not_contains \"$(visit_body \"$(page_of \"${DOMAIN_2}\" /brand.css)\")\" \"#language-button\" \"…its menu shown again (brand.css without the rule)\" || true\nINVITE_B=$(visit_body \"$(page_of \"${DOMAIN_2}\" /invite)\")\nassert_contains \"${INVITE_B}\" '<html lang=\"en\">' \"…its invitation page in English\" || true\nassert_contains \"${INVITE_B}\" \"<title>${BRAND_B} — Accept Invitation</title>\" \"…with its brand\" || true\nRESP=$(set_language \"${DOMAIN_3}\" null)\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.changed) \\(.domain.language)\"' \"true null\" \"${DOMAIN_3} cleared\" || true\nif wait_for 90 rendering_gone \"${DOMAIN_3}\"; then\n  log_pass \"…its language-only rendering is gone\"\nelse\n  log_fail \"…a rendering is left: $(json_get \"$(domain_entry \"${DOMAIN_3}\")\" '.rendering')\"\nfi\nCSS_C=$(page_of \"${DOMAIN_3}\" /brand.css)\nassert_eq \"$(visit_status \"${CSS_C}\")\" \"200\" \"auth.${DOMAIN_3}/brand.css: the stock stylesheet (4.13)\" || true\nassert_not_contains \"$(visit_body \"${CSS_C}\")\" \"#language-button\" \"…without the language rule\" || true\nassert_eq \"$(language_audit \"${DOMAIN_2}\")\" \"null tr,tr null\" \"The audit: domain.language.updated for ${DOMAIN_2}, null → tr, then tr → null\" || true\nassert_eq \"$(language_audit \"${DOMAIN_3}\")\" \"null en,en null\" \"…for ${DOMAIN_3}, null → en, then en → null\" || true\nassert_eq \"$(authelia_pid)\" \"${AUTHELIA_PID}\" \"Clearing the languages restarted no Authelia\" || true"
     }
   ],
   "apiHelpers": [],

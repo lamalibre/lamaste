@@ -4,6 +4,7 @@ import { Loader2, MailPlus, UserX, XCircle } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { ConfirmDialog, DialogButtons, Modal } from './Dialog.jsx';
 import InvitationStatus from './InvitationStatus.jsx';
+import { mailStatusText } from '../lib/mail.js';
 import { useToast } from './Toast.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { invalidateUsers, warningText } from '../lib/identity.js';
@@ -226,6 +227,7 @@ export default function PluginInvitations({ plugin }) {
                 </span>
                 <InvitationStatus invitation={inv} />
                 <span>until {new Date(inv.expiresAt).toLocaleDateString()}</span>
+                {mailStatusText(inv.mail) && <span>{mailStatusText(inv.mail)}</span>}
                 <button
                   type="button"
                   onClick={() => setRevokeTarget(inv.id)}

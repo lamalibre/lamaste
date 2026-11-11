@@ -1,0 +1,2763 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 42,
+    "name": "Mail: a person's own account, invitations, the Gmail API (Single-VM)",
+    "suite": "e2e",
+    "description": "42 — Mail: a person's own account, invitations, the Gmail API (Single-VM)",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "nginx", "openssl", "oathtool", "sqlite3"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${u}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${u}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-onboarding-complete-an-smtp-transport-to-the-sink",
+      "label": "Pre-flight: onboarding complete, an SMTP transport to the sink",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is not complete (provision the 'provisioned' tier)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Onboarding is not complete (provision the 'provisioned' tier)"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Set DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$ONBOARDING\" '.domain'"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Onboarding is complete (${DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete (${DOMAIN})"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -c -n --arg h 127.0.0.1 --argjson p \"${SINK_PORT}\" --arg u \"${SINK_USER}\" --arg pw \"$(cat \"${SINK}/password\")\" --arg ca \"$(cat \"${SINK}/ca.pem\")\" --arg s \"no-reply@notify.${DOMAIN}\" '{host: $h, port: $p, security: \"tls\", username: $u, password: $pw, caPem: $ca, senderAddress: $s, senderName: \"E2E Relay\"}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call PUT \"settings/mail\" \"${BODY}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "PUT /api/settings/mail: the sink, trusted through caPem",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "PUT /api/settings/mail: the sink, trusted through caPem"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding complete, an SMTP transport to the sink\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(api_get \"onboarding/status\" 2>/dev/null || echo '{}')\nif [ \"$(json_get \"$ONBOARDING\" '.status')\" != \"COMPLETED\" ]; then\n  log_fail \"Onboarding is not complete (provision the 'provisioned' tier)\"\n  end_test\n  exit $?\nfi\nDOMAIN=$(json_get \"$ONBOARDING\" '.domain')\nlog_pass \"Onboarding is complete (${DOMAIN})\"\ncleanup\nmkdir -p \"${SINK}\"\n# The reset's per-address count lives in the panel's memory: a restart starts this run afresh\nsudo systemctl restart lamalibre-lamaste-serverd\nwait_for_http \"${PANEL_DIRECT_URL}/api/health\" 60 || log_fail \"The panel does not answer after a restart\"\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nstart_smtp_sink \"${SINK}\" \"${SINK_PORT}\" \"${SINK_USER}\" || log_fail \"The SMTP sink does not start\"\nBODY=$(jq -c -n --arg h 127.0.0.1 --argjson p \"${SINK_PORT}\" --arg u \"${SINK_USER}\" --arg pw \"$(cat \"${SINK}/password\")\" \\\n  --arg ca \"$(cat \"${SINK}/ca.pem\")\" --arg s \"no-reply@notify.${DOMAIN}\" \\\n  '{host: $h, port: $p, security: \"tls\", username: $u, password: $pw, caPem: $ca, senderAddress: $s, senderName: \"E2E Relay\"}')\nRESP=$(call PUT \"settings/mail\" \"${BODY}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"PUT /api/settings/mail: the sink, trusted through caPem\" || true\nlocal_wait_authelia \"${DOMAIN}\"\n\n# ===========================================================================\n# 1. The Users listing\n# ==========================================================================="
+    },
+    {
+      "id": "who-can-reset-their-own-password",
+      "label": "Who can reset their own password",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "GET /api/users: ${RESET_USER}@${MAIL_DOMAIN} deliverable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$USERS\" | jq -r --arg u \"${RESET_USER}\" '.users[] | select(.username == $u) | .emailDeliverable' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/users: ${RESET_USER}@${MAIL_DOMAIN} deliverable"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "…an address under .test is not",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$USERS\" | jq -r --arg u \"${TEST_ONLY_USER}\" '.users[] | select(.username == $u) | .emailDeliverable' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…an address under .test is not"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Who can reset their own password\"\n\nnew_user \"${RESET_USER}\" \"${RESET_USER}@${MAIL_DOMAIN}\"\nnew_user \"${CHANGE_USER}\" \"${CHANGE_USER}@${MAIL_DOMAIN}\"\nnew_user \"${BARE_USER}\" \"${BARE_USER}@${MAIL_DOMAIN}\"\nnew_user \"${TEST_ONLY_USER}\" \"${TEST_ONLY_USER}@example.test\"\nUSERS=$(api_get \"users\")\nassert_eq \"$(echo \"$USERS\" | jq -r --arg u \"${RESET_USER}\" '.users[] | select(.username == $u) | .emailDeliverable' 2>/dev/null)\" \"true\" \"GET /api/users: ${RESET_USER}@${MAIL_DOMAIN} deliverable\" || true\nassert_eq \"$(echo \"$USERS\" | jq -r --arg u \"${TEST_ONLY_USER}\" '.users[] | select(.username == $u) | .emailDeliverable' 2>/dev/null)\" \"false\" \"…an address under .test is not\" || true\n\n# ===========================================================================\n# 2. Forgot password\n# ==========================================================================="
+    },
+    {
+      "id": "the-reset-page",
+      "label": "The reset page",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "Set PAGE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/reset\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "auth.${DOMAIN}/reset: the page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<html lang=\"en\">"
+              },
+              "message": "auth.${DOMAIN}/reset: the page"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The reset page\"\n\nPAGE=$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"https://auth.${DOMAIN}/reset\" 2>/dev/null || echo \"\")\nassert_contains \"$PAGE\" '<html lang=\"en\">' \"auth.${DOMAIN}/reset: the page\" || true"
+    },
+    {
+      "id": "start-answers-alike-whoever-is-named",
+      "label": "Start answers alike, whoever is named",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set T0",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date +%s%N"
+          },
+          "capture": [
+            {
+              "variable": "T0",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Set FOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${RESET_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set T1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date +%s%N"
+          },
+          "capture": [
+            {
+              "variable": "T1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set MISSING",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"e2e41-nobody-${RUN_ID}\""
+          },
+          "capture": [
+            {
+              "variable": "MISSING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Set T2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date +%s%N"
+          },
+          "capture": [
+            {
+              "variable": "T2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "A user: 202 {sent: true}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$FOUND\") $(body_of \"$FOUND\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202 {\"sent\":true}"
+              },
+              "message": "A user: 202 {sent: true}"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Nobody: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$MISSING\") $(body_of \"$MISSING\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202 {\"sent\":true}"
+              },
+              "message": "Nobody: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "…both after the same delay (about a second)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(( (T1 - T0) / 1000000 >= 900 )) $(( (T2 - T1) / 1000000 >= 900 ))"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "…both after the same delay (about a second)"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set MAIL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sink_last_to \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "MAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Set LINK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mail_link \"$MAIL\" \"/reset#\""
+          },
+          "capture": [
+            {
+              "variable": "LINK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "…its link https://auth.${DOMAIN}/reset#<token>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "LINK"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/reset#"
+              },
+              "message": "…its link https://auth.${DOMAIN}/reset#<token>"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "…naming the username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$MAIL\" '.text')"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "RESET_USER"
+              },
+              "message": "…naming the username"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Set TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "token_of \"$LINK\""
+          },
+          "capture": [
+            {
+              "variable": "TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"Start answers alike, whoever is named\"\n\nT0=$(date +%s%N)\nFOUND=$(reset_start \"${RESET_USER}\")\nT1=$(date +%s%N)\nMISSING=$(reset_start \"e2e41-nobody-${RUN_ID}\")\nT2=$(date +%s%N)\nassert_eq \"$(status_of \"$FOUND\") $(body_of \"$FOUND\")\" '202 {\"sent\":true}' \"A user: 202 {sent: true}\" || true\nassert_eq \"$(status_of \"$MISSING\") $(body_of \"$MISSING\")\" '202 {\"sent\":true}' \"Nobody: the same answer\" || true\nassert_eq \"$(( (T1 - T0) / 1000000 >= 900 )) $(( (T2 - T1) / 1000000 >= 900 ))\" \"1 1\" \"…both after the same delay (about a second)\" || true\nif sink_wait_count \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\" 1 30; then log_pass \"The user's mail is in the sink\"; else log_fail \"No reset mail arrived\"; fi\nMAIL=$(sink_last_to \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\")\nLINK=$(mail_link \"$MAIL\" \"/reset#\")\nassert_contains \"$LINK\" \"https://auth.${DOMAIN}/reset#\" \"…its link https://auth.${DOMAIN}/reset#<token>\" || true\nassert_contains \"$(json_get \"$MAIL\" '.text')\" \"${RESET_USER}\" \"…naming the username\" || true\nTOKEN=$(token_of \"$LINK\")"
+    },
+    {
+      "id": "lookup-then-finish-with-an-authenticator-code",
+      "label": "Lookup, then finish with an authenticator code",
+      "steps": [
+        {
+          "id": "step-36",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_lookup \"${TOKEN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Lookup: the user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".username",
+              "expected": {
+                "kind": "var",
+                "name": "RESET_USER"
+              },
+              "message": "Lookup: the user"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "A token nobody holds: 410",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(reset_lookup \"$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "A token nobody holds: 410"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "local_reset_totp \"${RESET_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Set CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "oathtool --totp --base32 \"${SECRET}\""
+          },
+          "capture": [
+            {
+              "variable": "CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"000000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "A wrong code: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A wrong code: 400"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "…totp_invalid",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "totp_invalid"
+              },
+              "message": "…totp_invalid"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"${CODE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "The token, a new password and a current code: set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The token, a new password and a current code: set"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…the link is used up",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(reset_lookup \"${TOKEN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "…the link is used up"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "${RESET_USER} signs in through Authelia with the new password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${RESET_USER} signs in through Authelia with the new password"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Audited: account.password.reset",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audit_since account.password.reset)"
+              },
+              "path": "length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Audited: account.password.reset"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…the request audited without the address",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_since account.password.reset-requested)"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "${RESET_USER}@"
+              },
+              "message": "…the request audited without the address"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Lookup, then finish with an authenticator code\"\n\nRESP=$(reset_lookup \"${TOKEN}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.username' \"${RESET_USER}\" \"Lookup: the user\" || true\nassert_eq \"$(status_of \"$(reset_lookup \"$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')\")\")\" \"410\" \"A token nobody holds: 410\" || true\nSECRET=$(local_reset_totp \"${RESET_USER}\")\nCODE=$(oathtool --totp --base32 \"${SECRET}\")\nRESP=$(reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"000000\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A wrong code: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'totp_invalid' \"…totp_invalid\" || true\nRESP=$(reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"${CODE}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The token, a new password and a current code: set\" || true\nassert_eq \"$(status_of \"$(reset_lookup \"${TOKEN}\")\")\" \"410\" \"…the link is used up\" || true\nlocal_sign_in \"${RESET_USER}\" \"${NEW_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${RESET_USER} signs in through Authelia with the new password\" || true\nif sink_wait_count \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\" 2 30; then log_pass \"A \\\"password changed\\\" mail follows\"; else log_fail \"No \\\"password changed\\\" mail\"; fi\nassert_json_field \"$(audit_since account.password.reset)\" 'length > 0' 'true' \"Audited: account.password.reset\" || true\nassert_not_contains \"$(audit_since account.password.reset-requested)\" \"${RESET_USER}@\" \"…the request audited without the address\" || true"
+    },
+    {
+      "id": "a-code-is-good-once",
+      "label": "A code is good once",
+      "steps": [
+        {
+          "id": "step-51",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${RESET_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Another start",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "Another start"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Set TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\""
+          },
+          "capture": [
+            {
+              "variable": "TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_finish \"${TOKEN}\" \"${THIRD_PASSWORD}\" \"${CODE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "The code already accepted: totp_invalid",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "totp_invalid"
+              },
+              "message": "The code already accepted: totp_invalid"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_finish \"${TOKEN}\" \"${THIRD_PASSWORD}\" \"$(oathtool --totp --base32 \"${SECRET}\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "A fresh code: set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A fresh code: set"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A code is good once\"\n\nRESP=$(reset_start \"${RESET_USER}\")\nassert_eq \"$(status_of \"$RESP\")\" \"202\" \"Another start\" || true\nsink_wait_count \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\" 3 30 || log_fail \"No second reset mail\"\nTOKEN=$(token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${RESET_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\")\nRESP=$(reset_finish \"${TOKEN}\" \"${THIRD_PASSWORD}\" \"${CODE}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'totp_invalid' \"The code already accepted: totp_invalid\" || true\nwait_for_next_totp_window\nRESP=$(reset_finish \"${TOKEN}\" \"${THIRD_PASSWORD}\" \"$(oathtool --totp --base32 \"${SECRET}\")\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"A fresh code: set\" || true"
+    },
+    {
+      "id": "no-authenticator-no-reset-by-mail",
+      "label": "No authenticator, no reset by mail",
+      "steps": [
+        {
+          "id": "step-63",
+          "label": "Set TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\""
+          },
+          "capture": [
+            {
+              "variable": "TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"123456\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "A user without an authenticator: 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A user without an authenticator: 409"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "…no_totp (the page says to ask an administrator)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "no_totp"
+              },
+              "message": "…no_totp (the page says to ask an administrator)"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${BARE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "A second start while that link is live: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "A second start while that link is live: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "…and no new mail (the link is under 10 minutes old)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sink_count_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and no new mail (the link is under 10 minutes old)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"No authenticator, no reset by mail\"\n\nsudo /usr/local/sbin/lamaste-priv authelia-user purge-second-factors \"${BARE_USER}\" > /dev/null 2>&1 || true\nreset_start \"${BARE_USER}\" > /dev/null\nsink_wait_count \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No reset mail for ${BARE_USER}\"\nTOKEN=$(token_of \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"/reset#\")\")\nRESP=$(reset_finish \"${TOKEN}\" \"${NEW_PASSWORD}\" \"123456\")\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"A user without an authenticator: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'no_totp' \"…no_totp (the page says to ask an administrator)\" || true\nRESP=$(reset_start \"${BARE_USER}\")\nassert_eq \"$(status_of \"$RESP\")\" \"202\" \"A second start while that link is live: the same answer\" || true\nsleep 5\nassert_eq \"$(sink_count_to \"${SINK}\" \"${BARE_USER}@${MAIL_DOMAIN}\")\" \"1\" \"…and no new mail (the link is under 10 minutes old)\" || true"
+    },
+    {
+      "id": "an-administrator-never-resets-by-mail",
+      "label": "An administrator never resets by mail",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${ADMIN_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "A member of admins: the same answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(body_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202 {\"sent\":true}"
+              },
+              "message": "A member of admins: the same answer"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_start \"${ADMIN_USER}@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "…by address too",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "202"
+              },
+              "message": "…by address too"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…and no mail",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sink_count_to \"${SINK}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and no mail"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An administrator never resets by mail\"\n\nnew_user \"${ADMIN_USER}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\" '[\"admins\"]'\nRESP=$(reset_start \"${ADMIN_USER}\")\nassert_eq \"$(status_of \"$RESP\") $(body_of \"$RESP\")\" '202 {\"sent\":true}' \"A member of admins: the same answer\" || true\nRESP=$(reset_start \"${ADMIN_USER}@${MAIL_DOMAIN}\")\nassert_eq \"$(status_of \"$RESP\")\" \"202\" \"…by address too\" || true\nsleep 5\nassert_eq \"$(sink_count_to \"${SINK}\" \"${ADMIN_USER}@${MAIL_DOMAIN}\")\" \"0\" \"…and no mail\" || true\n\n# ===========================================================================\n# 3. Change password\n# ==========================================================================="
+    },
+    {
+      "id": "change-password-signed-in",
+      "label": "Change password, signed in",
+      "steps": [
+        {
+          "id": "step-78",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "Without a session: 401 (Gatekeeper asks Authelia)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Without a session: 401 (Gatekeeper asks Authelia)"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 15 -X POST -H \"Host: auth.${DOMAIN}\" -H 'Content-Type: application/json' -H \"Origin: https://auth.${DOMAIN}\" -H \"Remote-User: ${CHANGE_USER}\" -d \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -w '\\n%{http_code}' \"http://127.0.0.1:3100/api/account/password\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Set VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "The auth vhost asks Gatekeeper for the password change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "proxy_pass http://127.0.0.1:9294/authz/account/${DOMAIN};"
+              },
+              "message": "The auth vhost asks Gatekeeper for the password change"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set CHANGE_SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "local_reset_totp \"${CHANGE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "CHANGE_SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "${CHANGE_USER} signs in",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${CHANGE_USER} signs in"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "auth.${DOMAIN}/account/password: the page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -b \"${JAR}\" -o /dev/null -w '%{http_code}' \"https://auth.${DOMAIN}/account/password\" 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "auth.${DOMAIN}/account/password: the page"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "portal_post /api/account/password \"$(jq -c -n --arg c \"wrong-${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "A wrong current password: current_password_invalid",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "current_password_invalid"
+              },
+              "message": "A wrong current password: current_password_invalid"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "The current password, then the new one: set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The current password, then the new one: set"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "…signs in with it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SIGN_IN_RESULT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "…signs in with it"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Change password, signed in\"\n\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Without a session: 401 (Gatekeeper asks Authelia)\" || true\nRESP=$(curl -s --max-time 15 -X POST -H \"Host: auth.${DOMAIN}\" -H 'Content-Type: application/json' \\\n  -H \"Origin: https://auth.${DOMAIN}\" -H \"Remote-User: ${CHANGE_USER}\" \\\n  -d \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" \\\n  -w '\\n%{http_code}' \"http://127.0.0.1:3100/api/account/password\" 2>/dev/null || echo \"000\")\nassert_eq \"$(status_of \"$RESP\")\" \"401\" \"Remote-User sent straight to 127.0.0.1:3100: 401 — the panel takes the user from Gatekeeper's assertion alone\" || true\nVHOST=$(sudo cat \"/etc/nginx/sites-available/lamalibre-lamaste-auth-${DOMAIN}\" 2>/dev/null || echo \"\")\nassert_contains \"$VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/account/${DOMAIN};\" \"The auth vhost asks Gatekeeper for the password change\" || true\nCHANGE_SECRET=$(local_reset_totp \"${CHANGE_USER}\")\nlocal_sign_in \"${CHANGE_USER}\" \"${PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"${CHANGE_USER} signs in\" || true\nassert_eq \"$(curl -sk --max-time 15 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -b \"${JAR}\" -o /dev/null -w '%{http_code}' \"https://auth.${DOMAIN}/account/password\" 2>/dev/null)\" \"200\" \"auth.${DOMAIN}/account/password: the page\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"wrong-${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'current_password_invalid' \"A wrong current password: current_password_invalid\" || true\nRESP=$(portal_post /api/account/password \"$(jq -c -n --arg c \"${PASSWORD}\" --arg n \"${NEW_PASSWORD}\" '{currentPassword: $c, newPassword: $n}')\" -b \"${JAR}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The current password, then the new one: set\" || true\nlocal_sign_in \"${CHANGE_USER}\" \"${NEW_PASSWORD}\" \"${CHANGE_SECRET}\" \"${JAR}\" \"${DOMAIN}\"\nassert_eq \"${SIGN_IN_RESULT}\" \"OK OK\" \"…signs in with it\" || true\nif sink_wait_count \"${SINK}\" \"${CHANGE_USER}@${MAIL_DOMAIN}\" 1 30; then log_pass \"A \\\"password changed\\\" mail\"; else log_fail \"No \\\"password changed\\\" mail\"; fi\n\n# ===========================================================================\n# 4. An administrator's invitation\n# ==========================================================================="
+    },
+    {
+      "id": "mailed-reissued-accepted",
+      "label": "Mailed, reissued, accepted",
+      "steps": [
+        {
+          "id": "step-94",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "Set INV_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INV\" '.invitation.id'"
+          },
+          "capture": [
+            {
+              "variable": "INV_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-96",
+          "label": "Set OLD_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INV\" '.token'"
+          },
+          "capture": [
+            {
+              "variable": "OLD_TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "POST /api/invitations: mailed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INV"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "POST /api/invitations: mailed"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "…the mail carries the link answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(json_get \"$INV\" '.inviteUrl')"
+              },
+              "message": "…the mail carries the link answered"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "POST /api/invitations/${INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${INV_ID}/reissue",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "Set NEW_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RE\" '.token'"
+          },
+          "capture": [
+            {
+              "variable": "NEW_TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": "\"\\(.mail.status) \\(.invitation.id)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "sent ${INV_ID}"
+              },
+              "message": "POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "…a new token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_TOKEN"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OLD_TOKEN"
+              },
+              "message": "…a new token"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "…the new link mailed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(json_get \"$RE\" '.inviteUrl')"
+              },
+              "message": "…the new link mailed"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "Set OLD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "invite_post lookup \"{\\\"token\\\":\\\"${OLD_TOKEN}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "OLD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "The old link is dead ($(status_of \"$OLD\"))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$OLD\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The old link is dead ($(status_of \"$OLD\"))"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "GET /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "invitations"
+          },
+          "capture": [
+            {
+              "variable": "ROW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "The listing: mail sent, reissued",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROW"
+              },
+              "path": "\"\\(.mail.status) \\(.reissuedAt != null)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "sent true"
+              },
+              "message": "The listing: mail sent, reissued"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "invite_post accept \"$(jq -c -n --arg t \"${NEW_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "The new link accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The new link accepted"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Mailed, reissued, accepted\"\n\nINV=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${INVITEE}\\\",\\\"email\\\":\\\"${INVITEE}@${MAIL_DOMAIN}\\\"}\")\nINV_ID=$(json_get \"$INV\" '.invitation.id')\nOLD_TOKEN=$(json_get \"$INV\" '.token')\nassert_json_field \"$INV\" '.mail.status' 'sent' \"POST /api/invitations: mailed\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$INV\" '.inviteUrl')\" \"…the mail carries the link answered\" || true\nRE=$(api_post \"invitations/${INV_ID}/reissue\" '{}')\nNEW_TOKEN=$(json_get \"$RE\" '.token')\nassert_json_field \"$RE\" '\"\\(.mail.status) \\(.invitation.id)\"' \"sent ${INV_ID}\" \"POST /api/invitations/${INV_ID}/reissue: the same invitation, mailed again\" || true\nassert_not_eq \"${NEW_TOKEN}\" \"${OLD_TOKEN}\" \"…a new token\" || true\nsink_wait_count \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\" 2 30 || log_fail \"No second invitation mail\"\nassert_eq \"$(mail_link \"$(sink_last_to \"${SINK}\" \"${INVITEE}@${MAIL_DOMAIN}\")\" \"/invite#\")\" \"$(json_get \"$RE\" '.inviteUrl')\" \"…the new link mailed\" || true\nOLD=$(invite_post lookup \"{\\\"token\\\":\\\"${OLD_TOKEN}\\\"}\")\nassert_not_eq \"$(status_of \"$OLD\")\" \"200\" \"The old link is dead ($(status_of \"$OLD\"))\" || true\nROW=$(api_get \"invitations\" | jq -c --arg i \"${INV_ID}\" '.invitations[] | select(.id == $i)' 2>/dev/null || echo '{}')\nassert_json_field \"$ROW\" '\"\\(.mail.status) \\(.reissuedAt != null)\"' 'sent true' \"The listing: mail sent, reissued\" || true\nRESP=$(invite_post accept \"$(jq -c -n --arg t \"${NEW_TOKEN}\" --arg p \"${PASSWORD}\" '{token: $t, password: $p}')\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The new link accepted\" || true"
+    },
+    {
+      "id": "an-invitation-that-makes-an-administrator-not-mailed-unless-asked",
+      "label": "An invitation that makes an administrator: not mailed unless asked",
+      "steps": [
+        {
+          "id": "step-112",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "Set ADMIN_INV_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INV\" '.invitation.id'"
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_INV_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "POST /api/invitations (admins): not mailed, its link answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INV"
+              },
+              "path": "\"\\(.mail) \\(.inviteUrl | test(\"/invite#\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null true"
+              },
+              "message": "POST /api/invitations (admins): not mailed, its link answered"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "…a new link: not mailed either",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…a new link: not mailed either"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {
+              "mail": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "…a new link with mail: true — mailed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "…a new link with mail: true — mailed"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "POST /api/invitations/${ADMIN_INV_ID}/reissue",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations/${ADMIN_INV_ID}/reissue",
+            "body": {
+              "mail": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "RE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "A third new link: allowed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RE"
+              },
+              "path": ".mail",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "A third new link: allowed"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "call POST \"invitations/${ADMIN_INV_ID}/reissue\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "A fourth new link the same day: 429",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "429"
+              },
+              "message": "A fourth new link the same day: 429"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "…reissue_rate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "reissue_rate"
+              },
+              "message": "…reissue_rate"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An invitation that makes an administrator: not mailed unless asked\"\n\nINV=$(api_post \"invitations\" \"{\\\"username\\\":\\\"${ADMIN_INVITEE}\\\",\\\"email\\\":\\\"${ADMIN_INVITEE}@${MAIL_DOMAIN}\\\",\\\"groups\\\":[\\\"admins\\\"]}\")\nADMIN_INV_ID=$(json_get \"$INV\" '.invitation.id')\nassert_json_field \"$INV\" '\"\\(.mail) \\(.inviteUrl | test(\"/invite#\"))\"' 'null true' \"POST /api/invitations (admins): not mailed, its link answered\" || true\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{}')\nassert_json_field \"$RE\" '.mail' 'null' \"…a new link: not mailed either\" || true\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{\"mail\":true}')\nassert_json_field \"$RE\" '.mail.status' 'sent' \"…a new link with mail: true — mailed\" || true\nsink_wait_count \"${SINK}\" \"${ADMIN_INVITEE}@${MAIL_DOMAIN}\" 1 30 || log_fail \"No mail for the administrator's invitation asked to be mailed\"\nRE=$(api_post \"invitations/${ADMIN_INV_ID}/reissue\" '{\"mail\":false}')\nassert_json_field \"$RE\" '.mail' 'null' \"A third new link: allowed\" || true\nRESP=$(call POST \"invitations/${ADMIN_INV_ID}/reissue\" '{}')\nassert_eq \"$(status_of \"$RESP\")\" \"429\" \"A fourth new link the same day: 429\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'reissue_rate' \"…reissue_rate\" || true\ncall DELETE \"invitations/${ADMIN_INV_ID}\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 5. The Gmail API\n# ==========================================================================="
+    },
+    {
+      "id": "google-s-consent-against-a-stand-in-google",
+      "label": "Google's consent, against a stand-in Google",
+      "steps": [
+        {
+          "id": "step-128",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(transport)\" '.updatedAt'"
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-129",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "{ sudo lamaste-server mail google --client-id \"${GOOGLE_CLIENT_ID}\" --client-secret-stdin --sender \"no-reply@notify.${DOMAIN}\" --sender-name \"E2E Relay\" --no-wait --json < \"${WORK_DIR}/google/client-secret\" 2>/dev/null || true; } | grep -E '^\\{' | head -n 1 || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-130",
+          "label": "Set AUTHORIZE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$OUT\" '.authorizeUrl'"
+          },
+          "capture": [
+            {
+              "variable": "AUTHORIZE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-131",
+          "label": "mail google: the consent URL",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHORIZE"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "http://127.0.0.1:${GOOGLE_PORT}/o/oauth2/v2/auth?"
+              },
+              "message": "mail google: the consent URL"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "…with PKCE",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHORIZE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "code_challenge_method=S256"
+              },
+              "message": "…with PKCE"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "…offline access",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHORIZE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "access_type=offline"
+              },
+              "message": "…offline access"
+            }
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "Set BACK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 15 -o /dev/null -w '%{redirect_url}' \"${AUTHORIZE}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "BACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-135",
+          "label": "Google sends the browser back to auth.${DOMAIN}/mail/google/callback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BACK"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/mail/google/callback?"
+              },
+              "message": "Google sends the browser back to auth.${DOMAIN}/mail/google/callback"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "Set PAGE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -w '\\n%{http_code}' \"${BACK}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-137",
+          "label": "…which answers",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$PAGE\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…which answers"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "…Mail Is Set Up",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$PAGE\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Mail Is Set Up"
+              },
+              "message": "…Mail Is Set Up"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "The same return again: answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -o /dev/null -w '\\n%{http_code}' \"${BACK}\" 2>/dev/null)\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The same return again: answered"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "…but not stored again (the state is single use)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"${BACK}\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Mail Is Set Up"
+              },
+              "message": "…but not stored again (the state is single use)"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "Set T",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "transport"
+          },
+          "capture": [
+            {
+              "variable": "T",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-142",
+          "label": "GET /api/settings/mail: gmail-api, the account read from Google's token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "T"
+              },
+              "path": "\"\\(.kind) \\(.settings.account) \\(.settings.clientId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "gmail-api relay@${MAIL_DOMAIN} ${GOOGLE_CLIENT_ID}"
+              },
+              "message": "GET /api/settings/mail: gmail-api, the account read from Google's token"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "…a newer transport than the SMTP one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$T\" '.updatedAt')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "BEFORE"
+              },
+              "message": "…a newer transport than the SMTP one"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "…never the client secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "T"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "$(cat \"${WORK_DIR}/google/client-secret\")"
+              },
+              "message": "…never the client secret"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Google's consent, against a stand-in Google\"\n\nstart_fake_google \"${WORK_DIR}/google\" \"${GOOGLE_PORT}\" \"${GOOGLE_CLIENT_ID}\" \"relay@${MAIL_DOMAIN}\" || log_fail \"The stand-in Google does not start\"\nmail_google_dropin \"http://127.0.0.1:${GOOGLE_PORT}\"\nBEFORE=$(json_get \"$(transport)\" '.updatedAt')\nOUT=$({ sudo lamaste-server mail google --client-id \"${GOOGLE_CLIENT_ID}\" --client-secret-stdin \\\n  --sender \"no-reply@notify.${DOMAIN}\" --sender-name \"E2E Relay\" --no-wait --json < \"${WORK_DIR}/google/client-secret\" 2>/dev/null || true; } | grep -E '^\\{' | head -n 1 || echo '{}')\nAUTHORIZE=$(json_get \"$OUT\" '.authorizeUrl')\nassert_contains \"${AUTHORIZE}\" \"http://127.0.0.1:${GOOGLE_PORT}/o/oauth2/v2/auth?\" \"mail google: the consent URL\" || true\nassert_contains \"${AUTHORIZE}\" \"code_challenge_method=S256\" \"…with PKCE\" || true\nassert_contains \"${AUTHORIZE}\" \"access_type=offline\" \"…offline access\" || true\nBACK=$(curl -s --max-time 15 -o /dev/null -w '%{redirect_url}' \"${AUTHORIZE}\" 2>/dev/null || echo \"\")\nassert_contains \"${BACK}\" \"https://auth.${DOMAIN}/mail/google/callback?\" \"Google sends the browser back to auth.${DOMAIN}/mail/google/callback\" || true\nPAGE=$(curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -w '\\n%{http_code}' \"${BACK}\" 2>/dev/null || echo \"000\")\nassert_eq \"$(status_of \"$PAGE\")\" \"200\" \"…which answers\" || true\nassert_contains \"$(body_of \"$PAGE\")\" \"Mail Is Set Up\" \"…Mail Is Set Up\" || true\nassert_eq \"$(status_of \"$(curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -o /dev/null -w '\\n%{http_code}' \"${BACK}\" 2>/dev/null)\")\" \"200\" \"The same return again: answered\" || true\nassert_not_contains \"$(curl -sk --max-time 30 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" \"${BACK}\" 2>/dev/null)\" \"Mail Is Set Up\" \"…but not stored again (the state is single use)\" || true\nT=$(transport)\nassert_json_field \"$T\" '\"\\(.kind) \\(.settings.account) \\(.settings.clientId)\"' \"gmail-api relay@${MAIL_DOMAIN} ${GOOGLE_CLIENT_ID}\" \"GET /api/settings/mail: gmail-api, the account read from Google's token\" || true\nassert_not_eq \"$(json_get \"$T\" '.updatedAt')\" \"${BEFORE}\" \"…a newer transport than the SMTP one\" || true\nassert_not_contains \"$T\" \"$(cat \"${WORK_DIR}/google/client-secret\")\" \"…never the client secret\" || true"
+    },
+    {
+      "id": "sending-through-messages-send",
+      "label": "Sending through messages.send",
+      "steps": [
+        {
+          "id": "step-145",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail test \"google-check@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-146",
+          "label": "mail test: sent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "mail test: sent"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "Set SENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "google_sent | jq -c --arg t \"google-check@${MAIL_DOMAIN}\" '[.[] | select(.to | test($t))] | last' 2>/dev/null || echo null"
+          },
+          "capture": [
+            {
+              "variable": "SENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "…through the stand-in Google, From the sender",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SENT"
+              },
+              "path": ".from | test(\"no-reply@notify\")",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…through the stand-in Google, From the sender"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Sending through messages.send\"\n\nOUT=$(cli_json mail test \"google-check@${MAIL_DOMAIN}\")\nassert_json_field \"$OUT\" '.mail.status' 'sent' \"mail test: sent\" || true\nSENT=$(google_sent | jq -c --arg t \"google-check@${MAIL_DOMAIN}\" '[.[] | select(.to | test($t))] | last' 2>/dev/null || echo null)\nassert_json_field \"$SENT\" '.from | test(\"no-reply@notify\")' 'true' \"…through the stand-in Google, From the sender\" || true"
+    },
+    {
+      "id": "google-s-daily-limit-the-account-rests-for-24-hours",
+      "label": "Google's daily limit: the account rests for 24 hours",
+      "steps": [
+        {
+          "id": "step-150",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail test \"google-limit@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-151",
+          "label": "mail test: not sent ($(json_get \"$OUT\" '.mail.status'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OUT\" '.mail.status')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "mail test: not sent ($(json_get \"$OUT\" '.mail.status'))"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "The account limited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(transport)"
+              },
+              "path": ".budget.limitedUntil != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The account limited"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Audited: mail.transport.limited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(audit_since mail.transport.limited)"
+              },
+              "path": "length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Audited: mail.transport.limited"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail test \"google-held@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-156",
+          "label": "While limited no mail is tried, even with Google willing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OUT\" '.mail.status')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "While limited no mail is tried, even with Google willing"
+            }
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail resume"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-158",
+          "label": "mail resume: no longer limited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".transport.budget.limitedUntil",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "mail resume: no longer limited"
+            }
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail test \"google-again@${MAIL_DOMAIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-160",
+          "label": "…a test mail sent again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".mail.status",
+              "expected": {
+                "kind": "literal",
+                "value": "sent"
+              },
+              "message": "…a test mail sent again"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Google's daily limit: the account rests for 24 hours\"\n\ngoogle_config '{\"sendError\":{\"status\":403,\"reason\":\"dailyLimitExceeded\"}}'\nOUT=$(cli_json mail test \"google-limit@${MAIL_DOMAIN}\")\nassert_not_eq \"$(json_get \"$OUT\" '.mail.status')\" \"sent\" \"mail test: not sent ($(json_get \"$OUT\" '.mail.status'))\" || true\nassert_json_field \"$(transport)\" '.budget.limitedUntil != null' 'true' \"The account limited\" || true\nassert_json_field \"$(audit_since mail.transport.limited)\" 'length > 0' 'true' \"Audited: mail.transport.limited\" || true\ngoogle_config '{\"sendError\":null}'\nOUT=$(cli_json mail test \"google-held@${MAIL_DOMAIN}\")\nassert_not_eq \"$(json_get \"$OUT\" '.mail.status')\" \"sent\" \"While limited no mail is tried, even with Google willing\" || true\nOUT=$(cli_json mail resume)\nassert_json_field \"$OUT\" '.transport.budget.limitedUntil' 'null' \"mail resume: no longer limited\" || true\nOUT=$(cli_json mail test \"google-again@${MAIL_DOMAIN}\")\nassert_json_field \"$OUT\" '.mail.status' 'sent' \"…a test mail sent again\" || true"
+    },
+    {
+      "id": "cleared",
+      "label": "Cleared",
+      "steps": [
+        {
+          "id": "step-161",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cli_json mail clear"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-162",
+          "label": "mail clear",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "path": ".event",
+              "expected": {
+                "kind": "literal",
+                "value": "complete"
+              },
+              "message": "mail clear"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "…no transport",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(transport)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…no transport"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Cleared\"\n\nOUT=$(cli_json mail clear)\nassert_json_field \"$OUT\" '.event' 'complete' \"mail clear\" || true\nassert_eq \"$(transport)\" \"null\" \"…no transport\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 42 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\n# ============================================================================\n# What mail gives people on one VM (design: packages/core/docs/\n# mail-design.md §3.2–§3.3, §4, §6), over a stand-in SMTP server (helpers.sh\n# write_smtp_sink) and a stand-in Google (write_fake_google, reached through\n# LAMALIBRE_LAMASTE_TEST_GOOGLE_BASE_URL in a unit drop-in). Spec 41 is the\n# relay's side.\n#\n# 1. The Users listing: emailDeliverable — an address under .test is not.\n# 2. Forgot password, end to end on the portal: start answers alike for a\n#    user and for nobody (202, after the same delay); the mail in the sink\n#    with a link https://auth.<domain>/reset#<token>; lookup names the user;\n#    finish needs a current authenticator code; the user signs in through\n#    Authelia with the new password; a \"password changed\" mail follows. A\n#    second link with the code already accepted: refused (totp_invalid),\n#    then a fresh code sets it. A user without an authenticator: no_totp;\n#    a second start while their link is live and under 10 minutes old\n#    mails nothing. A member of admins: the same answer, never a mail.\n# 3. Change password, signed in: behind Gatekeeper (401 without a\n#    session), the current password checked, then set; signs in with it.\n#    A Remote-User sent straight to the panel's loopback port names\n#    nobody (401).\n# 4. An administrator's invitation: mailed with its link; reissued — the\n#    old link dead, a new one mailed; the listing shows the mail and the\n#    reissue; the new link accepted. One granting admins: not mailed\n#    unless asked; three new links a day, the fourth 429 reissue_rate.\n# 5. The Gmail API: lamaste-server mail google → the consent URL; Google's\n#    redirect to auth.<domain>/mail/google/callback stores the transport\n#    (the account read from the token); a test mail through messages.send;\n#    Google's daily limit → the account limited for 24 h, audited, mail held;\n#    mail resume → sending again; mail clear.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node nginx openssl oathtool sqlite3\n\nbegin_test \"42 — Mail: a person's own account, invitations, the Gmail API (Single-VM)\"\n\nWORK_DIR=\"/var/tmp/lamalibre-lamaste-e2e-mail-42\"\nSINK=\"${WORK_DIR}/sink\"\nSINK_PORT=2466\nSINK_USER=\"relay\"\nGOOGLE_PORT=4880\nGOOGLE_CLIENT_ID=\"123456789012-e2elamastemailtest.apps.googleusercontent.com\"\nMAIL_DOMAIN=\"e2e-mail.example.com\"\nRUN_ID=\"$(date +%s)\"\n# Per-run usernames: the reset caps count mails per user over an hour\nRESET_USER=\"e2e41-reset-${RUN_ID}\"\nCHANGE_USER=\"e2e41-change-${RUN_ID}\"\nBARE_USER=\"e2e41-bare-${RUN_ID}\"\nTEST_ONLY_USER=\"e2e41-local-${RUN_ID}\"\nINVITEE=\"e2e41-inv-${RUN_ID}\"\nADMIN_USER=\"e2e41-admin-${RUN_ID}\"\nADMIN_INVITEE=\"e2e41-adminv-${RUN_ID}\"\n# Test credentials for this run only, never printed\nPASSWORD=\"E2e-$(openssl rand -hex 12)\"\nNEW_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nTHIRD_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"${WORK_DIR}/person.cookies\"\nAUDIT_BASE=0\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\ncall() {\n  if [ -n \"${3:-}\" ]; then\n    _curl_mtls -X \"$1\" -H 'Content-Type: application/json' -d \"$3\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  else\n    _curl_mtls -X \"$1\" -w '\\n%{http_code}' \"${BASE_URL}/api/$2\" 2>/dev/null || true\n  fi\n}\n\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 2\n  done\n  return 1\n}\n\ncli_json() {\n  local out\n  out=$({ sudo lamaste-server \"$@\" --json 2>/dev/null || true; } | grep -E '^\\{' | tail -n 1 || true)\n  if [ -n \"${out}\" ]; then printf '%s\\n' \"${out}\"; else echo '{}'; fi\n}\n\n# portal_post <path> <json> [curl args...] — a POST from the portal's own page: the body, then the status\nportal_post() {\n  local path=\"$1\" body=\"$2\"\n  shift 2\n  curl -sk --max-time 20 --resolve \"auth.${DOMAIN}:443:127.0.0.1\" -X POST -H 'Content-Type: application/json' \\\n    -H \"Origin: https://auth.${DOMAIN}\" -H 'Sec-Fetch-Site: same-origin' \"$@\" -d \"$body\" -w '\\n%{http_code}' \\\n    \"https://auth.${DOMAIN}${path}\" 2>/dev/null || echo \"000\"\n}\n\nreset_start() { portal_post /api/account/reset/start \"$(jq -c -n --arg i \"$1\" '{identifier: $i}')\"; }\nreset_lookup() { portal_post /api/account/reset/lookup \"$(jq -c -n --arg t \"$1\" '{token: $t}')\"; }\nreset_finish() { portal_post /api/account/reset/finish \"$(jq -c -n --arg t \"$1\" --arg p \"$2\" --arg c \"$3\" '{token: $t, password: $p, totp: $c}')\"; }\n\n# token_of <link> — the token after '#'\ntoken_of() { printf '%s' \"${1#*#}\"; }\n\n# new_user <username> <email> — created with PASSWORD; asserts\nnew_user() {\n  local resp\n  resp=$(api_post \"users\" \"{\\\"username\\\":\\\"$1\\\",\\\"displayname\\\":\\\"E2E $1\\\",\\\"email\\\":\\\"$2\\\",\\\"password\\\":\\\"${PASSWORD}\\\",\\\"groups\\\":${3:-[]}}\")\n  assert_json_field \"$resp\" '.user.username' \"$1\" \"User $1 <$2>\" || true\n}\n\ninvite_post() {\n  curl -s --max-time 15 -X POST -H 'Content-Type: application/json' -d \"$2\" -w '\\n%{http_code}' \"${PANEL_DIRECT_URL}/api/invite/$1\" 2>/dev/null || echo \"000\"\n}\n\ntransport() { api_get \"settings/mail\" | jq -c '.transport' 2>/dev/null || echo \"null\"; }\ngoogle_sent() { curl -s --max-time 10 \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/sent\" 2>/dev/null || echo '[]'; }\ngoogle_config() { curl -s --max-time 10 -X POST -H 'Content-Type: application/json' -d \"$1\" \"http://127.0.0.1:${GOOGLE_PORT}/-/e2e/config\" > /dev/null 2>&1 || true; }\naudit_since() {\n  api_get \"audit?action=$1&limit=50\" | jq -c --argjson base \"${AUDIT_BASE}\" '[.entries[]? | select(.id > $base)]' 2>/dev/null || echo \"[]\"\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  call DELETE \"settings/mail\" > /dev/null 2>&1 || true\n  local u id\n  for id in $(api_get \"invitations\" 2>/dev/null | jq -r '.invitations[]? | select(.username | startswith(\"e2e41-\")) | .id' 2>/dev/null || true); do\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n    call DELETE \"invitations/${id}\" > /dev/null 2>&1 || true\n  done\n  for u in $(api_get \"users\" 2>/dev/null | jq -r '.users[]? | select(.username | startswith(\"e2e41-\")) | .username' 2>/dev/null || true); do\n    api_delete \"users/${u}?erase=true\" > /dev/null 2>&1 || true\n  done\n  stop_smtp_sink\n  stop_fake_google\n  if sudo test -e /etc/systemd/system/lamalibre-lamaste-serverd.service.d/e2e-google.conf; then mail_google_dropin \"\"; fi\n  sudo rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

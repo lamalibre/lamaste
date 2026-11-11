@@ -41,6 +41,10 @@
     "./native-apps": {
       "types": "./dist/native-apps.d.ts",
       "import": "./dist/native-apps.js"
+    },
+    "./mail": {
+      "types": "./dist/mail.d.ts",
+      "import": "./dist/mail.js"
     }
   },
   "files": [

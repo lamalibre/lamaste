@@ -22,6 +22,8 @@
  *   branding <domain> remove          Back to the stock pages
  *   branding <domain> preview         The title, footer, theme and the generated stylesheet
  *   language <domain> [en|tr|--unset] The language of its pages: shown, set or cleared
+ *   mail <domain> <subcommand> …      Its mail override ({@link runMail}: show, set-smtp,
+ *                                     google, sender, limit, test, resume, clear)
  *
  * Also `plugins domain <name> [<domain>]` ({@link pluginDomainCmd}).
  *
@@ -35,6 +37,7 @@ import chalk from 'chalk';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitComplete, emitError } from '../ndjson.js';
 import { fail } from '../fail.js';
+import { runMail } from './mail.js';
 import { terminalText } from '../plugin-settings.js';
 import {
   autheliaVersionText,
@@ -70,6 +73,7 @@ export async function runDomains(args, { json }) {
   if (sub === 'members' && name) return membersCmd(name.toLowerCase(), rest, { json });
   if (sub === 'branding' && name) return brandingCmd(name.toLowerCase(), rest, { json });
   if (sub === 'language' && name) return languageCmd(name.toLowerCase(), rest, { json });
+  if (sub === 'mail' && name) return runMail(rest, { json, domain: name.toLowerCase() });
   const command = DOMAIN_COMMANDS[sub];
   if (!command || !name) return usage(sub ? 1 : 0);
   const domain = name.toLowerCase();
@@ -108,6 +112,8 @@ ${b('Subcommands:')}
   ${c('branding <domain> remove')}          Back to the stock pages
   ${c('branding <domain> preview')}         The title, footer, theme and the generated stylesheet
   ${c('language <domain> [en|tr|--unset]')} The language of its pages — shown without an argument
+  ${c('mail <domain> <subcommand>')}       Its mail override: a sender, or a transport of its own
+                                    (lamaste-server domains mail <domain> for the subcommands)
 
   Every domain has its own sign-in (auth.<domain>) and member list; a user reaches a
   domain's protected hosts only as its member. An external member reaches only what

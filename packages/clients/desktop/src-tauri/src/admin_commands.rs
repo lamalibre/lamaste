@@ -663,6 +663,101 @@ pub async fn admin_get_domain_branding_preview(
     admin_refusable_task("GET", domain_branding_path(&name, "/preview"), None).await
 }
 
+// --- Mail: the relay's transport and a domain's override (mail-design.md §3.5) ---
+
+/// `/api/settings/mail<rest>` for the relay (`domain` `None`), else
+/// `/api/domains/<name>/mail<rest>`.
+fn mail_path(domain: Option<&str>, rest: &str) -> String {
+    match domain {
+        None => format!("/api/settings/mail{}", rest),
+        Some(name) => domain_path(name, &format!("/mail{}", rest)),
+    }
+}
+
+/// A JSON object body, or a refusal naming what it should have been. Bodies
+/// of the mail commands may carry a password or a client secret: they reach
+/// curl on stdin (never an argument), and nothing here logs them or puts
+/// them into an error.
+fn mail_object_body(input: serde_json::Value, what: &str) -> Result<String, serde_json::Value> {
+    if !input.is_object() {
+        return Err(refusal(format!("{} is a JSON object", what)));
+    }
+    Ok(input.to_string())
+}
+
+/// The relay's transport (`domain` `None`) or a domain's override:
+/// `{ transport }`, `transport` null when none. Never a secret.
+#[tauri::command]
+pub async fn admin_get_mail(domain: Option<String>) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("GET", mail_path(domain.as_deref(), ""), None).await
+}
+
+/// Set an `smtp` transport, checked before it is stored (`password` omitted
+/// keeps the stored one). Rejects with the panel's refusal (`code`
+/// `mail_check_failed` with `reason`, `invalid_ca_pem`, `password_required`,
+/// `mail_sender_host_taken`).
+#[tauri::command]
+pub async fn admin_set_mail_smtp(
+    domain: Option<String>,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = mail_object_body(input, "An SMTP transport")?;
+    admin_refusable_task("PUT", mail_path(domain.as_deref(), ""), Some(body)).await
+}
+
+/// Start Google's consent for a `gmail-api` transport: `{ authorizeUrl,
+/// expiresAt }`. The body carries the OAuth client secret.
+#[tauri::command]
+pub async fn admin_start_mail_google_consent(
+    domain: Option<String>,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = mail_object_body(input, "A Google consent request")?;
+    admin_refusable_task("POST", mail_path(domain.as_deref(), "/google/start"), Some(body)).await
+}
+
+/// Change the sender, its name or the daily limit (`PATCH`).
+#[tauri::command]
+pub async fn admin_update_mail(
+    domain: Option<String>,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = mail_object_body(input, "A mail change")?;
+    admin_refusable_task("PATCH", mail_path(domain.as_deref(), ""), Some(body)).await
+}
+
+/// A domain's sender over the relay's transport (`PUT …/mail/sender`).
+#[tauri::command]
+pub async fn admin_set_domain_mail_sender(
+    name: String,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = mail_object_body(input, "A sender")?;
+    admin_refusable_task("PUT", mail_path(Some(&name), "/sender"), Some(body)).await
+}
+
+/// End a provider's limit refusal early.
+#[tauri::command]
+pub async fn admin_resume_mail(domain: Option<String>) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("POST", mail_path(domain.as_deref(), "/resume"), None).await
+}
+
+/// Remove the transport or override (a Google grant revoked, best effort).
+#[tauri::command]
+pub async fn admin_clear_mail(domain: Option<String>) -> Result<serde_json::Value, serde_json::Value> {
+    admin_refusable_task("DELETE", mail_path(domain.as_deref(), ""), None).await
+}
+
+/// Send a test mail to `to`: `{ mail: { status, error? } }`.
+#[tauri::command]
+pub async fn admin_send_test_mail(
+    domain: Option<String>,
+    to: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let body = serde_json::json!({ "to": to }).to_string();
+    admin_refusable_task("POST", mail_path(domain.as_deref(), "/test"), Some(body)).await
+}
+
 /// Move a plugin to another active domain. Rejects with the panel's refusal
 /// (409 while one of its surfaces is served).
 #[tauri::command]
@@ -680,6 +775,29 @@ pub async fn admin_set_plugin_domain(
 #[tauri::command]
 pub async fn admin_revoke_invitation(id: String) -> Result<serde_json::Value, serde_json::Value> {
     admin_refusable_task("DELETE", format!("/api/invitations/{}", url_encode(&id)), None).await
+}
+
+/// The body of a reissue: `{ "mail": … }` when the administrator chose,
+/// else `{}` — the panel then mails as on creation (not for an invitation
+/// granting `admins` or a `feria-*` group).
+fn reissue_body(mail: Option<bool>) -> String {
+    match mail {
+        Some(mail) => serde_json::json!({ "mail": mail }).to_string(),
+        None => "{}".to_string(),
+    }
+}
+
+/// A new link for a pending invitation (the old one stops working), mailed
+/// as `mail` says (omitted: as on creation); the link is answered once.
+/// Rejects with the panel's refusal (`code` `not_found`,
+/// `invitation_not_pending`, `username_taken`, `reissue_rate`).
+#[tauri::command]
+pub async fn admin_reissue_invitation(
+    id: String,
+    mail: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = format!("/api/invitations/{}/reissue", url_encode(&id));
+    admin_refusable_task("POST", path, Some(reissue_body(mail))).await
 }
 
 // ===========================================================================
@@ -2408,6 +2526,13 @@ mod tests {
     fn a_refusal_keeps_the_dependent_consumers() {
         assert!(refusal_field_kept("consumers", &serde_json::json!([{ "consumer": "leave" }])));
         assert!(!refusal_field_kept("consumers", &serde_json::json!("leave")));
+    }
+
+    #[test]
+    fn a_reissue_names_the_mail_choice_only_when_made() {
+        assert_eq!(reissue_body(None), "{}");
+        assert_eq!(reissue_body(Some(true)), r#"{"mail":true}"#);
+        assert_eq!(reissue_body(Some(false)), r#"{"mail":false}"#);
     }
 
     #[test]

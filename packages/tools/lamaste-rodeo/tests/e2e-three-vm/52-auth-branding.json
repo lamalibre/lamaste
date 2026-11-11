@@ -947,22 +947,22 @@
         },
         {
           "id": "step-48",
-          "label": "…no stylesheet: exactly the stock page",
+          "label": "…links /brand.css: the stock stylesheet (4.14: the change-password link)",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "not_contains",
+              "kind": "contains",
               "actual": {
                 "kind": "var",
                 "name": "PAGE_C"
               },
               "substring": {
                 "kind": "literal",
-                "value": "brand.css"
+                "value": "<link rel=\"stylesheet\" href=\"/brand.css\">"
               },
-              "message": "…no stylesheet: exactly the stock page"
+              "message": "…links /brand.css: the stock stylesheet (4.14: the change-password link)"
             }
           }
         },
@@ -988,7 +988,7 @@
           }
         }
       ],
-      "bash": "log_section \"The sign-in pages: theme, logo switch, stylesheet — C is the stock page\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/: 200\" || true\nPAGE_A=$(visit_body \"$RESP\")\nassert_contains \"${PAGE_A}\" 'data-theme=\"dark\"' \"…data-theme=\\\"dark\\\" (A's theme)\" || true\nassert_contains \"${PAGE_A}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (A serves a logo)\" || true\nassert_contains \"${PAGE_A}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\nCSP_A=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\nassert_contains \"${CSP_A}\" \"style-src 'self'\" \"…Authelia's Content-Security-Policy is sent, style-src 'self' as Authelia writes it\" || true\nassert_not_contains \"${PAGE_A}\" 'data-theme=\"light\"' \"…no light theme left anywhere in the page\" || true\n\nPAGE_B=$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\nassert_contains \"${PAGE_B}\" 'data-theme=\"light\"' \"auth.${DOMAIN_2}/: data-theme=\\\"light\\\" (B's theme)\" || true\nassert_contains \"${PAGE_B}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (B serves a logo)\" || true\nassert_contains \"${PAGE_B}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /)\")\nPAGE_C=$(visit_body \"$RESP\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/: 200\" || true\nassert_contains \"${PAGE_C}\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\" (the stock theme)\" || true\nassert_contains \"${PAGE_C}\" 'data-logooverride=\"false\"' \"…data-logooverride=\\\"false\\\" (the placeholder is never shown)\" || true\nassert_not_contains \"${PAGE_C}\" 'brand.css' \"…no stylesheet: exactly the stock page\" || true\nassert_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\" \"style-src 'self'\" \"…the same CSP as a branded domain's\" || true"
+      "bash": "log_section \"The sign-in pages: theme, logo switch, stylesheet — C is the stock page\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/: 200\" || true\nPAGE_A=$(visit_body \"$RESP\")\nassert_contains \"${PAGE_A}\" 'data-theme=\"dark\"' \"…data-theme=\\\"dark\\\" (A's theme)\" || true\nassert_contains \"${PAGE_A}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (A serves a logo)\" || true\nassert_contains \"${PAGE_A}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\nCSP_A=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\nassert_contains \"${CSP_A}\" \"style-src 'self'\" \"…Authelia's Content-Security-Policy is sent, style-src 'self' as Authelia writes it\" || true\nassert_not_contains \"${PAGE_A}\" 'data-theme=\"light\"' \"…no light theme left anywhere in the page\" || true\n\nPAGE_B=$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\nassert_contains \"${PAGE_B}\" 'data-theme=\"light\"' \"auth.${DOMAIN_2}/: data-theme=\\\"light\\\" (B's theme)\" || true\nassert_contains \"${PAGE_B}\" 'data-logooverride=\"true\"' \"…data-logooverride=\\\"true\\\" (B serves a logo)\" || true\nassert_contains \"${PAGE_B}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css\" || true\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN_3}\" /)\")\nPAGE_C=$(visit_body \"$RESP\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN_3}/: 200\" || true\nassert_contains \"${PAGE_C}\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\" (the stock theme)\" || true\nassert_contains \"${PAGE_C}\" 'data-logooverride=\"false\"' \"…data-logooverride=\\\"false\\\" (the placeholder is never shown)\" || true\nassert_contains \"${PAGE_C}\" '<link rel=\"stylesheet\" href=\"/brand.css\">' \"…links /brand.css: the stock stylesheet (4.14: the change-password link)\" || true\nassert_contains \"$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]' | awk '$1 == \"content-security-policy:\" {print}' | tail -n 1)\" \"style-src 'self'\" \"…the same CSP as a branded domain's\" || true"
     },
     {
       "id": "brand-css-the-accent-the-hidden-footer-the-asset-headers",
@@ -1194,7 +1194,24 @@
         },
         {
           "id": "step-60",
-          "label": "auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)",
+          "label": "Set CSS_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "auth.${DOMAIN_3}/brand.css: 200, the stock stylesheet (no brand)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1203,25 +1220,46 @@
               "kind": "eq",
               "actual": {
                 "kind": "expr",
-                "template": "$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\")\")"
+                "template": "$(visit_status \"${CSS_C}\")"
               },
               "expected": {
                 "kind": "literal",
-                "value": "404"
+                "value": "200"
               },
-              "message": "auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)"
+              "message": "auth.${DOMAIN_3}/brand.css: 200, the stock stylesheet (no brand)"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "…no brand colours, the change-password link's rules alone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_body \"${CSS_C}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "--primary"
+              },
+              "message": "…no brand colours, the change-password link's rules alone"
             }
           }
         }
       ],
-      "bash": "log_section \"/brand.css: the accent, the hidden footer, the asset headers\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/brand.css: 200\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"${HEADERS}\" \"content-type: text/css\" \"…text/css (by the extension)\" || true\nassert_contains \"${HEADERS}\" \"x-content-type-options: nosniff\" \"…X-Content-Type-Options: nosniff\" || true\nassert_contains \"${HEADERS}\" \"cache-control: public, max-age=0, must-revalidate\" \"…Cache-Control: public, max-age=0, must-revalidate\" || true\nCSS_A=$(visit_body \"$RESP\")\nassert_contains \"${CSS_A}\" \"--primary: ${ACCENT_A} !important;\" \"…--primary is A's accent\" || true\nassert_contains \"${CSS_A}\" 'a[href^=\"https://www.authelia.com\"] { display: none !important; }' \"…the \\\"Powered by\\\" footer link is hidden\" || true\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"--primary: ${ACCENT_B} !important;\" \"auth.${DOMAIN_2}/brand.css: --primary is B's accent\" || true\nassert_eq \"$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\")\")\" \"404\" \"auth.${DOMAIN_3}/brand.css: 404 (no brand, no stylesheet)\" || true"
+      "bash": "log_section \"/brand.css: the accent, the hidden footer, the asset headers\"\n\nRESP=$(visit - \"$(auth_url \"${DOMAIN}\" /brand.css)\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"auth.${DOMAIN}/brand.css: 200\" || true\nHEADERS=$(visit_headers \"$RESP\" | tr '[:upper:]' '[:lower:]')\nassert_contains \"${HEADERS}\" \"content-type: text/css\" \"…text/css (by the extension)\" || true\nassert_contains \"${HEADERS}\" \"x-content-type-options: nosniff\" \"…X-Content-Type-Options: nosniff\" || true\nassert_contains \"${HEADERS}\" \"cache-control: public, max-age=0, must-revalidate\" \"…Cache-Control: public, max-age=0, must-revalidate\" || true\nCSS_A=$(visit_body \"$RESP\")\nassert_contains \"${CSS_A}\" \"--primary: ${ACCENT_A} !important;\" \"…--primary is A's accent\" || true\nassert_contains \"${CSS_A}\" 'a[href^=\"https://www.authelia.com\"] { display: none !important; }' \"…the \\\"Powered by\\\" footer link is hidden\" || true\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"--primary: ${ACCENT_B} !important;\" \"auth.${DOMAIN_2}/brand.css: --primary is B's accent\" || true\nCSS_C=$(visit - \"$(auth_url \"${DOMAIN_3}\" /brand.css)\")\nassert_eq \"$(visit_status \"${CSS_C}\")\" \"200\" \"auth.${DOMAIN_3}/brand.css: 200, the stock stylesheet (no brand)\" || true\nassert_not_contains \"$(visit_body \"${CSS_C}\")\" \"--primary\" \"…no brand colours, the change-password link's rules alone\" || true"
     },
     {
       "id": "the-logos-and-favicons-the-fixtures-bytes-c-gets-authelia-s",
       "label": "The logos and favicons: the fixtures' bytes; C gets Authelia's",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-63",
           "label": "auth.${DOMAIN}/static/media/logo.png: logo A's bytes, image/png",
           "target": "local",
           "continueOnError": true,
@@ -1242,7 +1280,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-64",
           "label": "auth.${DOMAIN_2}/static/media/logo.png: logo B's bytes",
           "target": "local",
           "continueOnError": true,
@@ -1263,7 +1301,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-65",
           "label": "auth.${DOMAIN_3}/static/media/logo.png: Authelia's placeholder (the asset directory's logo.png)",
           "target": "local",
           "continueOnError": true,
@@ -1284,7 +1322,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-66",
           "label": "auth.${DOMAIN}/favicon.ico: favicon A's bytes, ${ICO_TYPE}",
           "target": "local",
           "continueOnError": true,
@@ -1305,7 +1343,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-67",
           "label": "auth.${DOMAIN_2}/favicon.ico: favicon B's PNG bytes under the .ico name, ${ICO_TYPE} by the extension",
           "target": "local",
           "continueOnError": true,
@@ -1326,7 +1364,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-68",
           "label": "Set FAVICON_C",
           "target": "local",
           "op": {
@@ -1343,7 +1381,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-69",
           "label": "auth.${DOMAIN_3}/favicon.ico: 200, Authelia's own",
           "target": "local",
           "continueOnError": true,
@@ -1364,7 +1402,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-70",
           "label": "…not favicon A",
           "target": "local",
           "continueOnError": true,
@@ -1385,7 +1423,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-71",
           "label": "…not favicon B",
           "target": "local",
           "continueOnError": true,
@@ -1413,7 +1451,7 @@
       "label": "The locale files: the brand name in place of {{authelia}}, in English and Turkish",
       "steps": [
         {
-          "id": "step-70",
+          "id": "step-72",
           "label": "Set EN_A",
           "target": "local",
           "op": {
@@ -1430,7 +1468,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-73",
           "label": "auth.${DOMAIN}/locales/en/portal.json: \\",
           "target": "local",
           "continueOnError": true,
@@ -1452,7 +1490,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-74",
           "label": "…\\",
           "target": "local",
           "continueOnError": true,
@@ -1474,7 +1512,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-75",
           "label": "…no {{authelia}} left in any value",
           "target": "local",
           "continueOnError": true,
@@ -1496,7 +1534,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-76",
           "label": "Set TR_A",
           "target": "local",
           "op": {
@@ -1513,7 +1551,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-77",
           "label": "auth.${DOMAIN}/locales/tr/portal.json: the Turkish title carries ${BRAND_A} (${TR_A})",
           "target": "local",
           "continueOnError": true,
@@ -1534,7 +1572,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-78",
           "label": "…and no placeholder",
           "target": "local",
           "continueOnError": true,
@@ -1555,7 +1593,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-79",
           "label": "auth.${DOMAIN_2}/locales/en/portal.json says ${BRAND_B}",
           "target": "local",
           "continueOnError": true,
@@ -1577,7 +1615,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-80",
           "label": "Set EN_C",
           "target": "local",
           "op": {
@@ -1594,7 +1632,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-81",
           "label": "auth.${DOMAIN_3}/locales/en/portal.json is Authelia's own: the title still interpolates {{authelia}}",
           "target": "local",
           "continueOnError": true,
@@ -1616,7 +1654,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-82",
           "label": "…no brand of another domain",
           "target": "local",
           "continueOnError": true,
@@ -1637,7 +1675,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-83",
           "label": "\"))] | length > 0",
           "target": "local",
           "continueOnError": true,
@@ -1666,7 +1704,7 @@
       "label": "The invitation page: A's branded, C's the stock page, the same script",
       "steps": [
         {
-          "id": "step-82",
+          "id": "step-84",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1683,7 +1721,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-85",
           "label": "auth.${DOMAIN}/invite/x: 200",
           "target": "local",
           "continueOnError": true,
@@ -1704,7 +1742,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-86",
           "label": "Set INVITE_A",
           "target": "local",
           "op": {
@@ -1721,7 +1759,7 @@
           ]
         },
         {
-          "id": "step-85",
+          "id": "step-87",
           "label": "…titled ${BRAND_A} — Accept Invitation",
           "target": "local",
           "continueOnError": true,
@@ -1742,7 +1780,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-90",
           "label": "…the logo from the same origin",
           "target": "local",
           "continueOnError": true,
@@ -1763,7 +1801,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-91",
           "label": "…its colours from /brand.css (the inline style is one text for every brand: one CSP hash a release)",
           "target": "local",
           "continueOnError": true,
@@ -1784,7 +1822,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-92",
           "label": "…which carries the accent",
           "target": "local",
           "continueOnError": true,
@@ -1805,7 +1843,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-93",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1822,7 +1860,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-94",
           "label": "auth.${DOMAIN_3}/invite/x: 200",
           "target": "local",
           "continueOnError": true,
@@ -1843,7 +1881,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-95",
           "label": "Set INVITE_C",
           "target": "local",
           "op": {
@@ -1860,7 +1898,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-96",
           "label": "…the stock page",
           "target": "local",
           "continueOnError": true,
@@ -1881,7 +1919,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-97",
           "label": "…no brand header",
           "target": "local",
           "continueOnError": true,
@@ -1902,7 +1940,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-98",
           "label": "Both pages carry a script of the same length",
           "target": "local",
           "continueOnError": true,
@@ -1923,7 +1961,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-99",
           "label": "…byte for byte the same script (the API calls, and the CSP hash, are one)",
           "target": "local",
           "continueOnError": true,
@@ -1951,7 +1989,7 @@
       "label": "A member of A; a tunnel on each domain (B and C authenticated, A restricted)",
       "steps": [
         {
-          "id": "step-99",
+          "id": "step-101",
           "label": "${USER_A} has a directory id",
           "target": "local",
           "continueOnError": true,
@@ -1972,7 +2010,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-105",
           "label": "Set SECRET_A",
           "target": "local",
           "op": {
@@ -1996,7 +2034,7 @@
       "label": "The domain refusal on B's tunnel carries brand B",
       "steps": [
         {
-          "id": "step-108",
+          "id": "step-110",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2013,7 +2051,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-112",
           "label": "Set REFUSAL_B",
           "target": "local",
           "op": {
@@ -2030,7 +2068,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-113",
           "label": "…titled with ${BRAND_B}",
           "target": "local",
           "continueOnError": true,
@@ -2051,7 +2089,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-116",
           "label": "…B's accent",
           "target": "local",
           "continueOnError": true,
@@ -2072,7 +2110,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-117",
           "label": "…no Help link (B names no support URL)",
           "target": "local",
           "continueOnError": true,
@@ -2093,7 +2131,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-118",
           "label": "…nothing of brand A",
           "target": "local",
           "continueOnError": true,
@@ -2121,7 +2159,7 @@
       "label": "The access-request page on A's restricted tunnel carries brand A and its support contact",
       "steps": [
         {
-          "id": "step-117",
+          "id": "step-119",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2138,7 +2176,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-121",
           "label": "Set REQUEST_A",
           "target": "local",
           "op": {
@@ -2155,7 +2193,7 @@
           ]
         },
         {
-          "id": "step-120",
+          "id": "step-122",
           "label": "…titled with ${BRAND_A}",
           "target": "local",
           "continueOnError": true,
@@ -2176,7 +2214,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-126",
           "label": "…A's accent",
           "target": "local",
           "continueOnError": true,
@@ -2204,7 +2242,7 @@
       "label": "On C's tunnel the refusal is the stock page",
       "steps": [
         {
-          "id": "step-127",
+          "id": "step-129",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2221,7 +2259,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-131",
           "label": "Set REFUSAL_C",
           "target": "local",
           "op": {
@@ -2238,7 +2276,7 @@
           ]
         },
         {
-          "id": "step-130",
+          "id": "step-132",
           "label": "…titled without a brand",
           "target": "local",
           "continueOnError": true,
@@ -2259,7 +2297,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-133",
           "label": "…no brand header",
           "target": "local",
           "continueOnError": true,
@@ -2280,7 +2318,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-134",
           "label": "…the pages' own accent",
           "target": "local",
           "continueOnError": true,
@@ -2308,7 +2346,7 @@
       "label": "A's theme changed to oled: the page and its vhost follow",
       "steps": [
         {
-          "id": "step-133",
+          "id": "step-135",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2325,7 +2363,7 @@
           ]
         },
         {
-          "id": "step-134",
+          "id": "step-136",
           "label": "PUT …/branding with theme oled: revision 4, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2347,7 +2385,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-137",
           "label": "auth.${DOMAIN}/ says data-theme=\\\"oled\\\"",
           "target": "local",
           "op": {
@@ -2357,7 +2395,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-138",
           "label": "auth.${DOMAIN}/ does not say data-theme=\\\"oled\\\" within 90 s",
           "target": "local",
           "op": {
@@ -2367,7 +2405,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-139",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -2384,7 +2422,7 @@
           ]
         },
         {
-          "id": "step-140",
+          "id": "step-142",
           "label": "nginx -t passes",
           "target": "local",
           "op": {
@@ -2394,7 +2432,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-143",
           "label": "nginx -t fails with the rewritten auth vhost",
           "target": "local",
           "op": {
@@ -2411,7 +2449,7 @@
       "label": "A's logo removed: the logo switch off, the placeholder back",
       "steps": [
         {
-          "id": "step-142",
+          "id": "step-144",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2428,7 +2466,7 @@
           ]
         },
         {
-          "id": "step-143",
+          "id": "step-145",
           "label": "DELETE …/branding/logo: removed, revision 5, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2450,7 +2488,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-146",
           "label": "auth.${DOMAIN}/ says data-logooverride=\\\"false\\\"",
           "target": "local",
           "op": {
@@ -2460,7 +2498,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-147",
           "label": "auth.${DOMAIN}/ still says the logo is served, 90 s after its removal",
           "target": "local",
           "op": {
@@ -2470,7 +2508,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-148",
           "label": "auth.${DOMAIN}/static/media/logo.png is Authelia's placeholder again",
           "target": "local",
           "continueOnError": true,
@@ -2491,7 +2529,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-149",
           "label": "…the stylesheet stays (the brand does)",
           "target": "local",
           "continueOnError": true,
@@ -2519,7 +2557,7 @@
       "label": "B's brand removed: the stock page, its rendering gone",
       "steps": [
         {
-          "id": "step-148",
+          "id": "step-150",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2536,7 +2574,7 @@
           ]
         },
         {
-          "id": "step-149",
+          "id": "step-151",
           "label": "DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning",
           "target": "local",
           "continueOnError": true,
@@ -2558,7 +2596,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-152",
           "label": "GET says ${DOMAIN_2} has no brand",
           "target": "local",
           "continueOnError": true,
@@ -2580,17 +2618,17 @@
           }
         },
         {
-          "id": "step-151",
-          "label": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet",
+          "id": "step-153",
+          "label": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", the stock stylesheet",
           "target": "local",
           "op": {
             "type": "log",
             "level": "pass",
-            "message": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet"
+            "message": "auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", the stock stylesheet"
           }
         },
         {
-          "id": "step-152",
+          "id": "step-154",
           "label": "auth.${DOMAIN_2}/ is not the stock page 90 s after the removal",
           "target": "local",
           "op": {
@@ -2600,7 +2638,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-155",
           "label": "…data-theme=\\",
           "target": "local",
           "continueOnError": true,
@@ -2621,28 +2659,28 @@
           }
         },
         {
-          "id": "step-154",
-          "label": "auth.${DOMAIN_2}/brand.css: 404",
+          "id": "step-156",
+          "label": "auth.${DOMAIN_2}/brand.css: the stock stylesheet, no brand colours",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "eq",
+              "kind": "not_contains",
               "actual": {
                 "kind": "expr",
-                "template": "$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")"
+                "template": "$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")"
               },
-              "expected": {
+              "substring": {
                 "kind": "literal",
-                "value": "404"
+                "value": "--primary"
               },
-              "message": "auth.${DOMAIN_2}/brand.css: 404"
+              "message": "auth.${DOMAIN_2}/brand.css: the stock stylesheet, no brand colours"
             }
           }
         },
         {
-          "id": "step-155",
+          "id": "step-157",
           "label": "auth.${DOMAIN_2}/static/media/logo.png: the placeholder",
           "target": "local",
           "continueOnError": true,
@@ -2663,7 +2701,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-158",
           "label": "${WEB_ROOT}/${DOMAIN_2} is gone",
           "target": "local",
           "op": {
@@ -2673,7 +2711,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-159",
           "label": "${WEB_ROOT}/${DOMAIN_2} is still there",
           "target": "local",
           "op": {
@@ -2683,7 +2721,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-160",
           "label": "No rendering of ${DOMAIN_2} is left under .renders/",
           "target": "local",
           "op": {
@@ -2693,7 +2731,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-161",
           "label": "A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))",
           "target": "local",
           "op": {
@@ -2703,7 +2741,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-162",
           "label": "Exactly one rendering of ${DOMAIN} serves (the previous ones removed)",
           "target": "local",
           "continueOnError": true,
@@ -2724,14 +2762,14 @@
           }
         }
       ],
-      "bash": "log_section \"B's brand removed: the stock page, its rendering gone\"\n\nRESP=$(md_api DELETE \"domains/${DOMAIN_2}/branding\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.removed) \\(.warnings // [] | length)\"' \"true 0\" \"DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning\" || true\nassert_json_field \"$(branding_of \"${DOMAIN_2}\")\" '.branding' \"null\" \"GET says ${DOMAIN_2} has no brand\" || true\nif wait_for 90 stock_page \"${DOMAIN_2}\"; then\n  log_pass \"auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", no stylesheet\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ is not the stock page 90 s after the removal\"\nfi\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\"\" || true\nassert_eq \"$(visit_status \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"404\" \"auth.${DOMAIN_2}/brand.css: 404\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")\" \"200 image/png ${PLACEHOLDER_SHA}\" \"auth.${DOMAIN_2}/static/media/logo.png: the placeholder\" || true\nif wait_for 90 entry_gone \"${DOMAIN_2}\"; then\n  log_pass \"${WEB_ROOT}/${DOMAIN_2} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN_2} is still there\"\nfi\nif wait_for 90 renders_gone \"${DOMAIN_2}\"; then\n  log_pass \"No rendering of ${DOMAIN_2} is left under .renders/\"\nelse\n  log_fail \"A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))\"\nfi\nassert_eq \"$(renders_of \"${DOMAIN}\")\" \"1\" \"Exactly one rendering of ${DOMAIN} serves (the previous ones removed)\" || true"
+      "bash": "log_section \"B's brand removed: the stock page, its rendering gone\"\n\nRESP=$(md_api DELETE \"domains/${DOMAIN_2}/branding\")\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.removed) \\(.warnings // [] | length)\"' \"true 0\" \"DELETE /api/domains/${DOMAIN_2}/branding: removed, no warning\" || true\nassert_json_field \"$(branding_of \"${DOMAIN_2}\")\" '.branding' \"null\" \"GET says ${DOMAIN_2} has no brand\" || true\nif wait_for 90 stock_page \"${DOMAIN_2}\"; then\n  log_pass \"auth.${DOMAIN_2}/ is the stock page: data-logooverride=\\\"false\\\", the stock stylesheet\"\nelse\n  log_fail \"auth.${DOMAIN_2}/ is not the stock page 90 s after the removal\"\nfi\nassert_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /)\")\")\" 'data-theme=\"light\"' \"…data-theme=\\\"light\\\"\" || true\nassert_not_contains \"$(visit_body \"$(visit - \"$(auth_url \"${DOMAIN_2}\" /brand.css)\")\")\" \"--primary\" \"auth.${DOMAIN_2}/brand.css: the stock stylesheet, no brand colours\" || true\nassert_eq \"$(fetch_digest \"$(auth_url \"${DOMAIN_2}\" /static/media/logo.png)\")\" \"200 image/png ${PLACEHOLDER_SHA}\" \"auth.${DOMAIN_2}/static/media/logo.png: the placeholder\" || true\nif wait_for 90 entry_gone \"${DOMAIN_2}\"; then\n  log_pass \"${WEB_ROOT}/${DOMAIN_2} is gone\"\nelse\n  log_fail \"${WEB_ROOT}/${DOMAIN_2} is still there\"\nfi\nif wait_for 90 renders_gone \"${DOMAIN_2}\"; then\n  log_pass \"No rendering of ${DOMAIN_2} is left under .renders/\"\nelse\n  log_fail \"A rendering of ${DOMAIN_2} is left under .renders/ ($(renders_of \"${DOMAIN_2}\"))\"\nfi\nassert_eq \"$(renders_of \"${DOMAIN}\")\" \"1\" \"Exactly one rendering of ${DOMAIN} serves (the previous ones removed)\" || true"
     },
     {
       "id": "the-audit-names-fields-and-digests-never-the-name-or-the-bytes",
       "label": "The audit names fields and digests, never the name or the bytes",
       "steps": [
         {
-          "id": "step-161",
+          "id": "step-163",
           "label": "GET /api/audit?action=domain.branding.updated&limit=200",
           "target": "host",
           "op": {
@@ -2749,7 +2787,7 @@
           ]
         },
         {
-          "id": "step-162",
+          "id": "step-164",
           "label": "Five domain.branding.updated entries for ${DOMAIN}: fields, logo, favicon, fields, logo removed",
           "target": "local",
           "continueOnError": true,
@@ -2771,7 +2809,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-165",
           "label": "…the field entries name the fields (name, theme, accent, …)",
           "target": "local",
           "continueOnError": true,
@@ -2793,7 +2831,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-166",
           "label": "…the logo entry carries its digest",
           "target": "local",
           "continueOnError": true,
@@ -2815,7 +2853,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-167",
           "label": "…and the removal is one entry",
           "target": "local",
           "continueOnError": true,
@@ -2837,7 +2875,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-168",
           "label": "…revisions 1 to 5",
           "target": "local",
           "continueOnError": true,
@@ -2859,7 +2897,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-169",
           "label": "…no entry carries the brand's name",
           "target": "local",
           "continueOnError": true,
@@ -2880,7 +2918,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-170",
           "label": "…nor the logo's bytes",
           "target": "local",
           "continueOnError": true,
@@ -2905,8 +2943,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 52 — Per-domain branding: two brands, a stock third (Three-VM)\n# ============================================================================\n# The auth pages of a domain carry its brand (design: packages/core/docs/\n# auth-branding-design.md): A — the relay's primary — and B are branded\n# differently, C has no brand and must be exactly the stock page\n# (multi-domain-harness.sh names B and C).\n#\n# 1. B and C active. Two logos (PNG) and two favicons (an ICO, a PNG) made\n#    on the host VM, their digests kept. Brand A (dark, an accent, a\n#    support e-mail and URL, logo A, favicon A) and brand B (light, another\n#    accent, logo B, favicon B) through the API; each answer names the\n#    revision and the asset's digest, carries no warning; both rendered.\n# 2. The sign-in pages, from the visitor: A's index says data-theme=\"dark\",\n#    data-logooverride=\"true\" and links /brand.css; B's \"light\"; C's\n#    \"light\", \"false\" and no stylesheet — and Authelia's CSP is untouched.\n#    /brand.css carries the accent and the hidden footer, nosniff and the\n#    assets' cache policy; C has none (404). The logos and favicons are the\n#    fixtures' bytes under the content type of the extension; C gets\n#    Authelia's placeholder logo and its own favicon. The locale files say\n#    \"Login - Brand A\" in English and the brand in Turkish, no {{authelia}}\n#    left in a value; C's are Authelia's own.\n# 3. The invitation page of A carries the brand's name, logo and tagline\n#    with the stock page's script; C's is the stock page.\n# 4. Gatekeeper's pages: a member of A, signed in at B, gets B's branded\n#    domain refusal on B's tunnel; without a grant, A's branded\n#    access-request page on A's restricted tunnel (its support contact);\n#    on C's tunnel the stock refusal, no brand.\n# 5. A's theme changed to oled: the page and its vhost say so; A's logo\n#    removed: the logo switch off, the placeholder back; B's brand removed:\n#    the stock page, its rendering gone. The audit names fields and\n#    digests, never the name or the bytes.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=52\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nUSER_A=\"e2e52-a\"\n# Test credentials for this run only, never printed\nPASSWORD_A=\"E2e-$(openssl rand -hex 12)\"\nID_A=\"\"\nSECRET_A=\"\"\nBRAND_A=\"Brand A\"\nBRAND_B=\"Brand B\"\nTAGLINE_A=\"Sign in to A\"\nACCENT_A=\"#1d4ed8\"\nACCENT_B=\"#b91c1c\"\nSUPPORT_A=\"support-a@example.test\"\nHELP_A=\"https://help.example.test/a\"\n# The pages' own accent (Gatekeeper's PAGE_DEFAULT_ACCENT), on a stock page\nSTOCK_ACCENT=\"#22d3ee\"\nSUB_A=\"e2e52a\"\nSUB_B=\"e2e52b\"\nSUB_C=\"e2e52c\"\nPORT_A=18521\nPORT_B=18522\nPORT_C=18523\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_C=\"\"\n# The fixtures on the host VM (images and their JSON bodies)\nFIXTURES=\"/var/tmp/e2e-52-branding\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nLOGO_A_SHA=\"\"\nLOGO_B_SHA=\"\"\nFAVICON_A_SHA=\"\"\nFAVICON_B_SHA=\"\"\nPLACEHOLDER_SHA=\"\"\nLOGO_A_B64_HEAD=\"\"\nICO_TYPE=\"\"\n\n# brand_body <name> <tagline | -> <theme> <accent> <support e-mail | -> <support URL | -> — a PUT body\nbrand_body() {\n  jq -c -n --arg n \"$1\" --arg t \"$2\" --arg th \"$3\" --arg a \"$4\" --arg e \"$5\" --arg u \"$6\" \\\n    '{name: $n, theme: $th, accent: $a} + (if $t != \"-\" then {tagline: $t} else {} end) + (if $e != \"-\" then {supportEmail: $e} else {} end) + (if $u != \"-\" then {supportUrl: $u} else {} end)'\n}\n\n# auth_url <domain> <path> — a page of the domain's sign-in host\nauth_url() { echo \"https://auth.$1$2\"; }\n\n# branding_of <domain> — GET /api/domains/<domain>/branding, its body\nbranding_of() { body_of \"$(host_api_call GET \"domains/$1/branding\")\"; }\n\n# rendered_current <domain> — the rendering nginx serves is the record's revision\nrendered_current() { [ \"$(json_get \"$(branding_of \"$1\")\" '.branding.renderedCurrent')\" = \"true\" ]; }\n\n# page_says <domain> <substring> — the sign-in page of <domain> carries <substring>\npage_says() { [[ \"$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\" == *\"$2\"* ]]; }\n\n# fetch_digest <url> — \"<status> <content type> <sha256 of the body>\" of one request from the visitor\nfetch_digest() {\n  visitor_exec \"curl -sk --max-time 20 -o /tmp/e2e-52-body -w '%{http_code} %{content_type} ' $(q \"$1\") && sha256sum /tmp/e2e-52-body | cut -d' ' -f1 || echo fetch-failed\" 2>/dev/null | tr -d '\\r\\n' || echo \"\"\n}\n\n# host_digest <file on the host VM> — its SHA-256\nhost_digest() { host_exec \"sha256sum $(printf %q \"$1\") | cut -d' ' -f1\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\"; }\n\n# locale_file <domain> <locale> <namespace> — the locale file as served on the domain's sign-in host\nlocale_file() { visit_body \"$(visit - \"$(auth_url \"$1\" \"/locales/$2/$3.json\")\")\"; }\n\n# script_of <html> — the page's <script> section alone\nscript_of() { printf '%s\\n' \"$1\" | sed -n '/<script>/,/<\\/script>/p'; }\n\n# renders_of <domain> — how many rendering directories of <domain>\n# (`<domain>-<revision>-<hex>`) are under .renders/\nrenders_of() { host_exec \"ls ${WEB_ROOT}/.renders 2>/dev/null | awk -v p=$(printf %q \"$1-\") 'index(\\$0, p) == 1' | wc -l | tr -d ' '\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"?\"; }\n\n# renders_gone <domain> — none is left\nrenders_gone() { [ \"$(renders_of \"$1\")\" = \"0\" ]; }\n\n# entry_gone <domain> — the domain has no entry under the web root (no link, no directory)\nentry_gone() { [ \"$(host_exec \"test -L ${WEB_ROOT}/$1 -o -e ${WEB_ROOT}/$1 && echo there || echo gone\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" = \"gone\" ]; }\n\n# stock_page <domain> — the sign-in page of <domain> is the stock one: no logo switch, no stylesheet\nstock_page() {\n  local body\n  body=$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\n  [[ \"$body\" == *'data-logooverride=\"false\"'* && \"$body\" != *'brand.css'* ]]\n}\n\n# write_fixtures — the images on the host VM, deterministic (python3 with\n# zlib: a solid PNG of each colour; the ICO wraps a PNG entry), each with a\n# JSON body {data: <base64>} beside it; never printed\nwrite_fixtures() {\n  local script\n  script=$(\n    cat << 'PY'\nimport base64, json, os, struct, sys, zlib\nout = sys.argv[1]\ndef chunk(kind, data):\n    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)\ndef png(w, h, rgb):\n    raw = b''.join(b'\\x00' + bytes(rgb) * w for _ in range(h))\n    return (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))\n            + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))\ndef ico(entry, w, h):\n    return struct.pack('<HHH', 0, 1, 1) + struct.pack('<BBBBHHII', w, h, 0, 0, 1, 32, len(entry), 22) + entry\nfiles = {\n    'logo-a.png': png(48, 48, (29, 78, 216)),\n    'logo-b.png': png(64, 32, (185, 28, 28)),\n    'favicon-a.ico': ico(png(16, 16, (29, 78, 216)), 16, 16),\n    'favicon-b.png': png(32, 32, (185, 28, 28)),\n}\nfor name, data in files.items():\n    with open(os.path.join(out, name), 'wb') as f:\n        f.write(data)\n    with open(os.path.join(out, name + '.json'), 'w') as f:\n        json.dump({'data': base64.b64encode(data).decode('ascii')}, f)\nPY\n  )\n  host_exec \"rm -rf ${FIXTURES} && mkdir -p ${FIXTURES} && echo $(printf '%s' \"$script\" | base64 | tr -d '\\n') | base64 -d > ${FIXTURES}/mkimages.py && python3 ${FIXTURES}/mkimages.py ${FIXTURES} && ls ${FIXTURES}\" > /dev/null 2>&1 || true\n  LOGO_A_SHA=$(host_digest \"${FIXTURES}/logo-a.png\")\n  LOGO_B_SHA=$(host_digest \"${FIXTURES}/logo-b.png\")\n  FAVICON_A_SHA=$(host_digest \"${FIXTURES}/favicon-a.ico\")\n  FAVICON_B_SHA=$(host_digest \"${FIXTURES}/favicon-b.png\")\n  LOGO_A_B64_HEAD=$(host_exec \"base64 -w0 ${FIXTURES}/logo-a.png | head -c 24\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\")\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | grep -cE '^[0-9a-f]{64}$' || true)\" \"4\" \"Four image fixtures written on the host VM, each with a digest\" || true\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | sort -u | wc -l | tr -d ' ')\" \"4\" \"…all four distinct\" || true\n}\n\nbegin_test \"52 — Per-domain branding: two brands, a stock third (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id d\n  for d in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n    host_api_delete \"domains/${d}/branding\" > /dev/null 2>&1 || true\n  done\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_C}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  timed_exec 30 multipass exec \"${HOST_VM}\" -- sudo bash -c \"rm -rf ${FIXTURES}; true\" > /dev/null 2>&1\n  timed_exec 30 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f /tmp/e2e-52-body; true\" > /dev/null 2>&1\n  md_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 52 — Per-domain branding: two brands, a stock third (Three-VM)\n# ============================================================================\n# The auth pages of a domain carry its brand (design: packages/core/docs/\n# auth-branding-design.md): A — the relay's primary — and B are branded\n# differently, C has no brand and must be exactly the stock page\n# (multi-domain-harness.sh names B and C).\n#\n# 1. B and C active. Two logos (PNG) and two favicons (an ICO, a PNG) made\n#    on the host VM, their digests kept. Brand A (dark, an accent, a\n#    support e-mail and URL, logo A, favicon A) and brand B (light, another\n#    accent, logo B, favicon B) through the API; each answer names the\n#    revision and the asset's digest, carries no warning; both rendered.\n# 2. The sign-in pages, from the visitor: A's index says data-theme=\"dark\",\n#    data-logooverride=\"true\" and links /brand.css; B's \"light\"; C's\n#    \"light\", \"false\" and the stock stylesheet (4.14: the change-password\n#    link's rules alone) — and Authelia's CSP is untouched.\n#    /brand.css carries the accent and the hidden footer, nosniff and the\n#    assets' cache policy; C has none (404). The logos and favicons are the\n#    fixtures' bytes under the content type of the extension; C gets\n#    Authelia's placeholder logo and its own favicon. The locale files say\n#    \"Login - Brand A\" in English and the brand in Turkish, no {{authelia}}\n#    left in a value; C's are Authelia's own.\n# 3. The invitation page of A carries the brand's name, logo and tagline\n#    with the stock page's script; C's is the stock page.\n# 4. Gatekeeper's pages: a member of A, signed in at B, gets B's branded\n#    domain refusal on B's tunnel; without a grant, A's branded\n#    access-request page on A's restricted tunnel (its support contact);\n#    on C's tunnel the stock refusal, no brand.\n# 5. A's theme changed to oled: the page and its vhost say so; A's logo\n#    removed: the logo switch off, the placeholder back; B's brand removed:\n#    the stock page, its rendering gone. The audit names fields and\n#    digests, never the name or the bytes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\nMD_SPEC=52\n# shellcheck source-path=SCRIPTDIR source=multi-domain-harness.sh\nsource \"${SCRIPT_DIR}/multi-domain-harness.sh\"\n\nrequire_commands multipass curl jq perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nUSER_A=\"e2e52-a\"\n# Test credentials for this run only, never printed\nPASSWORD_A=\"E2e-$(openssl rand -hex 12)\"\nID_A=\"\"\nSECRET_A=\"\"\nBRAND_A=\"Brand A\"\nBRAND_B=\"Brand B\"\nTAGLINE_A=\"Sign in to A\"\nACCENT_A=\"#1d4ed8\"\nACCENT_B=\"#b91c1c\"\nSUPPORT_A=\"support-a@example.test\"\nHELP_A=\"https://help.example.test/a\"\n# The pages' own accent (Gatekeeper's PAGE_DEFAULT_ACCENT), on a stock page\nSTOCK_ACCENT=\"#22d3ee\"\nSUB_A=\"e2e52a\"\nSUB_B=\"e2e52b\"\nSUB_C=\"e2e52c\"\nPORT_A=18521\nPORT_B=18522\nPORT_C=18523\nTUNNEL_A=\"\"\nTUNNEL_B=\"\"\nTUNNEL_C=\"\"\n# The fixtures on the host VM (images and their JSON bodies)\nFIXTURES=\"/var/tmp/e2e-52-branding\"\nWEB_ROOT=\"/var/www/lamaste/auth\"\nLOGO_A_SHA=\"\"\nLOGO_B_SHA=\"\"\nFAVICON_A_SHA=\"\"\nFAVICON_B_SHA=\"\"\nPLACEHOLDER_SHA=\"\"\nLOGO_A_B64_HEAD=\"\"\nICO_TYPE=\"\"\n\n# brand_body <name> <tagline | -> <theme> <accent> <support e-mail | -> <support URL | -> — a PUT body\nbrand_body() {\n  jq -c -n --arg n \"$1\" --arg t \"$2\" --arg th \"$3\" --arg a \"$4\" --arg e \"$5\" --arg u \"$6\" \\\n    '{name: $n, theme: $th, accent: $a} + (if $t != \"-\" then {tagline: $t} else {} end) + (if $e != \"-\" then {supportEmail: $e} else {} end) + (if $u != \"-\" then {supportUrl: $u} else {} end)'\n}\n\n# auth_url <domain> <path> — a page of the domain's sign-in host\nauth_url() { echo \"https://auth.$1$2\"; }\n\n# branding_of <domain> — GET /api/domains/<domain>/branding, its body\nbranding_of() { body_of \"$(host_api_call GET \"domains/$1/branding\")\"; }\n\n# rendered_current <domain> — the rendering nginx serves is the record's revision\nrendered_current() { [ \"$(json_get \"$(branding_of \"$1\")\" '.branding.renderedCurrent')\" = \"true\" ]; }\n\n# page_says <domain> <substring> — the sign-in page of <domain> carries <substring>\npage_says() { [[ \"$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\" == *\"$2\"* ]]; }\n\n# fetch_digest <url> — \"<status> <content type> <sha256 of the body>\" of one request from the visitor\nfetch_digest() {\n  visitor_exec \"curl -sk --max-time 20 -o /tmp/e2e-52-body -w '%{http_code} %{content_type} ' $(q \"$1\") && sha256sum /tmp/e2e-52-body | cut -d' ' -f1 || echo fetch-failed\" 2>/dev/null | tr -d '\\r\\n' || echo \"\"\n}\n\n# host_digest <file on the host VM> — its SHA-256\nhost_digest() { host_exec \"sha256sum $(printf %q \"$1\") | cut -d' ' -f1\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\"; }\n\n# locale_file <domain> <locale> <namespace> — the locale file as served on the domain's sign-in host\nlocale_file() { visit_body \"$(visit - \"$(auth_url \"$1\" \"/locales/$2/$3.json\")\")\"; }\n\n# script_of <html> — the page's <script> section alone\nscript_of() { printf '%s\\n' \"$1\" | sed -n '/<script>/,/<\\/script>/p'; }\n\n# renders_of <domain> — how many rendering directories of <domain>\n# (`<domain>-<revision>-<hex>`) are under .renders/\nrenders_of() { host_exec \"ls ${WEB_ROOT}/.renders 2>/dev/null | awk -v p=$(printf %q \"$1-\") 'index(\\$0, p) == 1' | wc -l | tr -d ' '\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"?\"; }\n\n# renders_gone <domain> — none is left\nrenders_gone() { [ \"$(renders_of \"$1\")\" = \"0\" ]; }\n\n# entry_gone <domain> — the domain has no entry under the web root (no link, no directory)\nentry_gone() { [ \"$(host_exec \"test -L ${WEB_ROOT}/$1 -o -e ${WEB_ROOT}/$1 && echo there || echo gone\" 2>/dev/null | tail -n 1 | tr -d '\\r')\" = \"gone\" ]; }\n\n# stock_page <domain> — the sign-in page of <domain> is the stock one: no logo switch, no brand colours\nstock_page() {\n  local body css\n  body=$(visit_body \"$(visit - \"$(auth_url \"$1\" /)\")\")\n  css=$(visit_body \"$(visit - \"$(auth_url \"$1\" /brand.css)\")\")\n  # 4.13: every portal links /brand.css — a stock domain's carries the\n  # change-password link's rules alone, no brand colours\n  [[ \"$body\" == *'data-logooverride=\"false\"'* && \"$css\" != *'--primary'* ]]\n}\n\n# write_fixtures — the images on the host VM, deterministic (python3 with\n# zlib: a solid PNG of each colour; the ICO wraps a PNG entry), each with a\n# JSON body {data: <base64>} beside it; never printed\nwrite_fixtures() {\n  local script\n  script=$(\n    cat << 'PY'\nimport base64, json, os, struct, sys, zlib\nout = sys.argv[1]\ndef chunk(kind, data):\n    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)\ndef png(w, h, rgb):\n    raw = b''.join(b'\\x00' + bytes(rgb) * w for _ in range(h))\n    return (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))\n            + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))\ndef ico(entry, w, h):\n    return struct.pack('<HHH', 0, 1, 1) + struct.pack('<BBBBHHII', w, h, 0, 0, 1, 32, len(entry), 22) + entry\nfiles = {\n    'logo-a.png': png(48, 48, (29, 78, 216)),\n    'logo-b.png': png(64, 32, (185, 28, 28)),\n    'favicon-a.ico': ico(png(16, 16, (29, 78, 216)), 16, 16),\n    'favicon-b.png': png(32, 32, (185, 28, 28)),\n}\nfor name, data in files.items():\n    with open(os.path.join(out, name), 'wb') as f:\n        f.write(data)\n    with open(os.path.join(out, name + '.json'), 'w') as f:\n        json.dump({'data': base64.b64encode(data).decode('ascii')}, f)\nPY\n  )\n  host_exec \"rm -rf ${FIXTURES} && mkdir -p ${FIXTURES} && echo $(printf '%s' \"$script\" | base64 | tr -d '\\n') | base64 -d > ${FIXTURES}/mkimages.py && python3 ${FIXTURES}/mkimages.py ${FIXTURES} && ls ${FIXTURES}\" > /dev/null 2>&1 || true\n  LOGO_A_SHA=$(host_digest \"${FIXTURES}/logo-a.png\")\n  LOGO_B_SHA=$(host_digest \"${FIXTURES}/logo-b.png\")\n  FAVICON_A_SHA=$(host_digest \"${FIXTURES}/favicon-a.ico\")\n  FAVICON_B_SHA=$(host_digest \"${FIXTURES}/favicon-b.png\")\n  LOGO_A_B64_HEAD=$(host_exec \"base64 -w0 ${FIXTURES}/logo-a.png | head -c 24\" 2>/dev/null | tail -n 1 | tr -d '\\r' || echo \"\")\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | grep -cE '^[0-9a-f]{64}$' || true)\" \"4\" \"Four image fixtures written on the host VM, each with a digest\" || true\n  assert_eq \"$(printf '%s\\n%s\\n%s\\n%s\\n' \"${LOGO_A_SHA}\" \"${LOGO_B_SHA}\" \"${FAVICON_A_SHA}\" \"${FAVICON_B_SHA}\" | sort -u | wc -l | tr -d ' ')\" \"4\" \"…all four distinct\" || true\n}\n\nbegin_test \"52 — Per-domain branding: two brands, a stock third (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  local id d\n  for d in \"${DOMAIN}\" \"${DOMAIN_2}\"; do\n    host_api_delete \"domains/${d}/branding\" > /dev/null 2>&1 || true\n  done\n  for id in ${TUNNEL_A} ${TUNNEL_B} ${TUNNEL_C}; do\n    host_api_delete \"tunnels/${id}\" > /dev/null 2>&1 || true\n  done\n  host_api_delete \"users/${USER_A}?erase=true\" > /dev/null 2>&1 || true\n  timed_exec 30 multipass exec \"${HOST_VM}\" -- sudo bash -c \"rm -rf ${FIXTURES}; true\" > /dev/null 2>&1\n  timed_exec 30 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"rm -f /tmp/e2e-52-body; true\" > /dev/null 2>&1\n  md_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

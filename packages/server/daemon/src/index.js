@@ -24,8 +24,10 @@ import userSurfaceContext from './routes/user-surface.js';
 import nativeOauthContext from './routes/native-oauth.js';
 import { startNativeServices } from './lib/native-grants.js';
 import { startSignInEventServices } from './lib/sign-in-events.js';
+import accountRoutes from './routes/account.js';
 import delegatedInvitationsContext from './routes/delegated-invitations.js';
 import inviteRoutes from './routes/invite.js';
+import mailCallbackRoutes from './routes/mail-callback.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import {
   userAccessAdminRoutes,
@@ -56,9 +58,18 @@ import {
 } from './lib/vhost-reconcile.js';
 import { activeDomains, ensurePrimaryDomain, syncDomainAccess } from './lib/domains.js';
 import { ensureBrandingBase, reconcileAuthBranding } from './lib/auth-branding.js';
-import { writeInvitationsPage, writeInvitePage, writeUnavailablePage } from './lib/invite-page.js';
+import {
+  writeAccountPasswordPage,
+  writeAuthStockCss,
+  writeInvitationsPage,
+  writeInvitePage,
+  writeResetPage,
+  writeUnavailablePage,
+} from './lib/invite-page.js';
 import { touchUsersFile } from './lib/authelia.js';
 import { reconcileWebSurfaces } from './lib/web-surface.js';
+import { startMailHealthMonitor, stopMailHealthMonitor, syncMail } from './lib/mail.js';
+import { stopSubmissionListener } from './lib/mail-submission.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -177,6 +188,11 @@ async function start() {
     app.register(inviteRoutes, { prefix: '/api/invite' });
     app.register(enrollmentRoutes, { prefix: '/api/enroll' });
     app.register(userAccessPublicRoutes, { prefix: '/api/user-access' });
+    // Google's return from the relay's mail consent, on the primary auth host
+    app.register(mailCallbackRoutes);
+    // A person's own account on a domain's sign-in host: forgot password,
+    // change password (behind Authelia's forward auth)
+    app.register(accountRoutes, { prefix: '/api/account' });
   });
 
   // --- Protected routes (mTLS + onboarding guard) ---
@@ -269,6 +285,16 @@ async function start() {
       await writeUnavailablePage({ logger: server.log }).catch((err) => {
         server.log.warn({ err: err.message }, 'Startup write of the "not available" page failed');
       });
+      // The stock account pages and the sign-in stylesheet, the same way.
+      for (const [write, what] of [
+        [writeResetPage, 'forgot-password page'],
+        [writeAccountPasswordPage, 'change-password page'],
+        [writeAuthStockCss, 'sign-in stylesheet'],
+      ]) {
+        await write({ logger: server.log }).catch((err) => {
+          server.log.warn({ err: err.message }, `Startup write of the stock ${what} failed`);
+        });
+      }
       // First what the branded sign-in needs from Authelia — its asset
       // path, the placeholder logo and an explicit theme: the one
       // structural change the upgrade makes, one restart — so the
@@ -288,6 +314,17 @@ async function start() {
       // The brands' rendered directories in line with their records (a
       // restored backup, a pin bump, a change a crash cut short).
       await reconcileAuthBranding({ logger: server.log });
+      // The relay's mail (mail-design.md §5): the submission listener while
+      // the relay has a transport, Authelia's notifier and reset link, the
+      // portals' reset links. After the renderings, whose vhosts it
+      // rewrites.
+      await syncMail({ logger: server.log })
+        .then(({ warnings }) => {
+          if (warnings.length > 0) server.log.warn({ warnings }, 'Startup mail sync incomplete');
+        })
+        .catch((err) => {
+          server.log.warn({ err: err.message }, 'Startup mail sync failed');
+        });
     })();
   }
 
@@ -314,6 +351,10 @@ async function start() {
       // have reset the web root), each site's vhost in line.
       .then(() => reconcileWebSurfaces(server.log));
   }
+
+  // --- Mail: every transport checked now and every 6 hours, sending nothing
+  // (mail-design.md §5.1); old delivery records and consents swept ---
+  startMailHealthMonitor(server.log);
 
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
   startHostedPluginHealthMonitor(server.log);
@@ -360,6 +401,8 @@ async function start() {
     stopIdentityServices();
     stopPeerServices();
     stopHostedPluginHealthMonitor();
+    stopMailHealthMonitor();
+    await stopSubmissionListener().catch(() => {});
     clearRateLimitInterval();
     await server.close();
     process.exit(0);

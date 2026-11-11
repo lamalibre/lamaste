@@ -95,6 +95,7 @@ These three pieces interact through a clear lifecycle: the installer creates the
 | `9090` | Chisel Server | TCP      | Loopback only | WebSocket tunnel endpoint                  |
 | `9091` | Authelia      | TCP      | Loopback only | Authentication portal + forward auth API   |
 | `9294` | Gatekeeper    | TCP      | Loopback only | Tunnel authorization (auth_request target) |
+| `9295` | Panel Server  | TCP      | Loopback only | Mail submission listener (Authelia's mail) |
 
 All backend services (Panel Server, Chisel, Authelia) bind exclusively to `127.0.0.1`. nginx is the only process listening on public interfaces.
 

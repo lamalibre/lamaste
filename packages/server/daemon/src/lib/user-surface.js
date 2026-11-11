@@ -47,6 +47,7 @@ import {
   RELAY_PANEL_PORT,
   agentHalfMaxBodyMb,
   isAgentHostedPlugin,
+  isRelayAccountTarget,
   isRelayInvitationsTarget,
   isRelayUserSurfaceTarget,
   siteUserSurfaceRoutes,
@@ -734,6 +735,50 @@ export async function verifyInvitationsRelay(request) {
     route: target.invitations,
     domain: target.domain,
   };
+}
+
+/**
+ * Verify the relay assertion of a password change (`POST
+ * /api/account/password` on a domain's sign-in host, mail-design.md §6.3):
+ * signed by Gatekeeper once Authelia vouched for the session, for the panel
+ * (`@panel`, port 3100), bound to this request's method and raw target, of
+ * the password change's kind (`{ account: 'password', domain, path }`), and
+ * never seen before (the user surfaces' nonce store). The user is the
+ * assertion's; nothing else of the request names one.
+ *
+ * @param {import('fastify').FastifyRequest} request
+ * @returns {Promise<{ ok: true, username: string, domain: string } | { ok: false, reason: string }>}
+ */
+export async function verifyAccountRelay(request) {
+  let keys;
+  try {
+    keys = await panelVerifyKeys();
+  } catch (err) {
+    request.log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Relay signing key unusable — password changes are refused',
+    );
+    return { ok: false, reason: 'relay_key_unusable' };
+  }
+  if (!keys) return { ok: false, reason: 'relay_key_missing' };
+  const header = request.headers[RELAY_ASSERTION_HEADER];
+  const result = verifyRelayAssertion(typeof header === 'string' ? header : undefined, {
+    keys,
+    aud: RELAY_PANEL_AUDIENCE,
+    port: RELAY_PANEL_PORT,
+    method: request.method,
+    url: request.raw.url ?? '',
+    nonces: relayNonces,
+  });
+  if (!result.ok) {
+    request.log.info({ reason: result.reason }, 'Password change without a valid assertion');
+    return { ok: false, reason: result.reason };
+  }
+  const { caller, target } = result.payload;
+  if (caller.type !== 'user' || !isRelayAccountTarget(target)) {
+    return { ok: false, reason: 'malformed' };
+  }
+  return { ok: true, username: caller.username, domain: target.domain };
 }
 
 /**

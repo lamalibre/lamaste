@@ -93,6 +93,9 @@ const refused = {
   sub_filter_types: location('  sub_filter_types text/css;'),
   sub_filter_last_modified: location('  sub_filter_last_modified on;'),
   'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
+  'access_log to a file in a location': location('  access_log /etc/cron.d/x;'),
+  'access_log with a format in a location': location('  access_log off combined;'),
+  'access_log syslog in a location': location('  access_log syslog:server=127.0.0.1;'),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -108,6 +111,10 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
       ` ssl_certificate_key /etc/letsencrypt/live/a.example.com/privkey.pem;\n` +
       ` location / {\n  proxy_set_header Host $host;\n  proxy_pass http://127.0.0.1:20010;\n }\n}\n`,
   );
+});
+
+test('accepts access_log off in a location — and nothing else of it', () => {
+  validateVhost(location('  access_log off;\n  proxy_pass http://127.0.0.1:3100;'));
 });
 
 test('accepts the content types of a web surface in a location', () => {
@@ -322,7 +329,7 @@ test('hooks: refused unless run as root', () => {
 });
 
 test('authelia-user: the action and the username are validated before anything runs', () => {
-  for (const action of ['purge-second-factors', 'has-oidc-identifier']) {
+  for (const action of ['purge-second-factors', 'has-oidc-identifier', 'verify-totp']) {
     assert.deepEqual(priv.parseAutheliaUserArgs([action, 'ayse']), { action, username: 'ayse' });
     assert.deepEqual(priv.parseAutheliaUserArgs([action, '0_x-1']), {
       action,
@@ -354,6 +361,91 @@ test('authelia-user: refused unless run as root', () => {
     () => priv.main(['authelia-user', 'purge-second-factors', 'ayse']),
     /must run as root/,
   );
+});
+
+// RFC 6238 Appendix B: the secret "12345678901234567890" (ASCII), SHA-1, 8 digits.
+const RFC6238_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+
+/** A line of `authelia storage user totp export uri` as Authelia 4.39.28 prints it. */
+function totpUri({
+  issuer = 'Lamaste',
+  username,
+  secret,
+  algorithm = 'SHA1',
+  digits = 6,
+  period = 30,
+}) {
+  const query = new URLSearchParams({
+    algorithm,
+    digits: String(digits),
+    issuer,
+    period: String(period),
+    secret,
+  });
+  return `otpauth://totp/${encodeURIComponent(issuer)}:${username}?${query}`;
+}
+
+test('authelia-user verify-totp: Authelia’s URI export parsed, the user’s line found', () => {
+  const text = [
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET }),
+    totpUri({
+      issuer: 'auth.example.com',
+      username: 'mehmet',
+      secret: 'JBSWY3DPEHPK3PXP',
+      digits: 8,
+    }),
+    totpUri({ username: 'ayse-2', secret: 'JBSWY3DPEHPK3PXP' }),
+    '',
+    '',
+    "Successfully exported 3 TOTP configurations as TOTP URI's and printed them to the console",
+  ].join('\n');
+  const ayse = priv.totpConfigFor(text, 'ayse');
+  assert.equal(ayse.username, 'ayse');
+  assert.equal(ayse.digits, 6);
+  assert.equal(ayse.period, 30);
+  assert.equal(ayse.algorithm, 'sha1');
+  assert.equal(ayse.secret.toString('ascii'), '12345678901234567890');
+  assert.equal(priv.totpConfigFor(text, 'mehmet').digits, 8);
+  // A username that is another's prefix or suffix is not that user.
+  assert.equal(priv.totpConfigFor(text, 'ayse-2').username, 'ayse-2');
+  assert.equal(priv.totpConfigFor(text, 'yse'), null);
+  assert.equal(priv.totpConfigFor(text, 'nobody'), null);
+  // Lines that are not a TOTP URI of a known algorithm, digits and period.
+  for (const line of [
+    'otpauth://hotp/Lamaste:ayse?secret=GEZDGNBV&issuer=Lamaste&algorithm=SHA1&digits=6&period=30',
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, algorithm: 'MD5' }),
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, digits: 7 }),
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, period: 0 }),
+    totpUri({ username: 'ayse', secret: 'not base32!' }),
+    'otpauth://totp/Other:ayse?secret=GEZDGNBV&issuer=Lamaste&algorithm=SHA1&digits=6&period=30',
+  ]) {
+    assert.equal(priv.parseTotpUri(line), null, line);
+  }
+});
+
+test('authelia-user verify-totp: RFC 6238’s vectors, one step either side, nothing else', () => {
+  const config = priv.parseTotpUri(
+    totpUri({ username: 'ayse', secret: RFC6238_SECRET, digits: 8 }),
+  );
+  // RFC 6238 Appendix B, SHA-1: T = 59 s → 94287082, T = 1111111109 s → 07081804.
+  assert.equal(priv.matchTotpStep(config, '94287082', 59_000), 1);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000), 37037036);
+  // The neighbouring steps are accepted, two away are not.
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 + 30_000), 37037036);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 - 30_000), 37037036);
+  assert.equal(priv.matchTotpStep(config, '07081804', 1_111_111_109_000 + 60_000), null);
+  // A code of the wrong length or shape never matches.
+  for (const code of ['0708180', '070818045', '0708180a', '', ' 7081804']) {
+    assert.equal(priv.matchTotpStep(config, code, 1_111_111_109_000), null, code);
+  }
+  // Six digits: the last six of the eight.
+  const six = priv.parseTotpUri(totpUri({ username: 'ayse', secret: RFC6238_SECRET }));
+  assert.equal(priv.matchTotpStep(six, '287082', 59_000), 1);
+});
+
+test('authelia-user verify-totp: refused unless run as root', () => {
+  if (process.getuid?.() === 0) return;
+  assert.throws(() => priv.main(['authelia-user', 'verify-totp', 'ayse']), /must run as root/);
 });
 
 test('authelia-user has-oidc-identifier: a username in Authelia’s identifiers export, plain or quoted', () => {

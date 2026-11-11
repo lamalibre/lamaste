@@ -680,6 +680,23 @@ The `auth_request` target of an inviter's API on a domain's sign-in host, `auth.
 | 403    | Anything else refused (`X-Lamalibre-Refusal: forbidden`) — nginx answers JSON `403 { "error": "forbidden" }` |
 | 503    | The relay signing key is unusable                                                                            |
 
+### Password-Change Authorization (nginx auth_request)
+
+```
+GET /authz/account/:domain
+```
+
+**Host:** `127.0.0.1:9294`
+
+The `auth_request` target of a person's own password change on a domain's sign-in host, `POST auth.<domain>/api/account/password` ([Mail API](mail.md#account-routes)). The vhost names the portal in the path, `X-Original-URL` and `Host`, which must agree; the raw target must be `/api/account/password` exactly. Gatekeeper asks Authelia about the session **for that very URL** — the portal's rule wants two factors from the domain's members and external members — never from its session cache, one `authelia_session` only; checks the projection (member or external member of the domain, fail closed); and signs a relay assertion for the panel — audience `@panel`, port 3100, caller `{ type: "user", username }`, target `{ account: "password", domain, path: "/api/account/password" }`, bound to the method and target, a kind of its own that no other route accepts. The panel takes the user from it and nothing else: before, it read `Remote-User`, which any local process could send to its loopback port.
+
+| Status | Meaning                                                                                                     |
+| ------ | ----------------------------------------------------------------------------------------------------------- |
+| 200    | `X-Lamalibre-Relay-Assertion` for this one request; `Cache-Control: no-store`                               |
+| 401    | No valid session, or more than one session cookie — nginx answers JSON `401 { "error": "unauthenticated" }` |
+| 403    | Anything else refused — nginx answers JSON `403 { "error": "forbidden" }`                                   |
+| 503    | The relay signing key is unusable                                                                           |
+
 ### Domain membership
 
 Every authorization route (tunnel, user surface, shell) checks the user's membership of the host's domain after Authelia, from `/etc/lamalibre/lamaste/domains.json` (written by the panel, watched like `tunnels.json`): `{ "v": 2, "domains": [{ "name", "members": [username…], "externals": [username…] }] }`, active domains and active people only. A missing or unreadable projection, one of another version, or a host under no domain, refuses (fail closed). Authelia's own 403 — it renders the same membership — is no longer taken for "not signed in": a signed-in non-member gets **403** with the domain refusal page (the domain, the admin contact, a sign-out link to `https://auth.<domain>/logout`; no username), or JSON `{ "error": "not_a_member" }` on a user surface, instead of a 401 that sent the browser back to the sign-in page in a loop. Refusals are never cached; a membership change busts the session cache.

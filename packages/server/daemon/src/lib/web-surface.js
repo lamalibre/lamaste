@@ -86,6 +86,7 @@ import { findPluginByRoute } from './plugins.js';
 import { siteGrantsView } from './site-grants.js';
 import { readSites, readTunnels, withSitesLock, writeSites, writeTunnels } from './state.js';
 import { hostingAgentOf } from './user-surface.js';
+import { mailSenderHostnames } from './mail.js';
 
 /** Where the web trees live (a test points it elsewhere). */
 const TREES_ROOT = process.env.LAMALIBRE_LAMASTE_WEB_TREES_ROOT || WEB_TREES_ROOT;
@@ -469,7 +470,12 @@ async function hostnameTaken(subdomain, domain, sites, tunnels) {
   if (!isWebSurfaceSubdomain(subdomain))
     return `'${subdomain}' cannot be a web surface's subdomain`;
   const fqdn = `${subdomain}.${domain}`;
-  const holder = hostnameHolder(fqdn, { tunnels, sites });
+  const holder = hostnameHolder(fqdn, {
+    tunnels,
+    sites,
+    mailSenderDomains: await mailSenderHostnames(),
+  });
+  if (holder?.kind === 'mail-sender') return `'${fqdn}' is a sending domain of the relay's mail`;
   if (holder) return `${holder.kind === 'tunnel' ? 'a tunnel' : 'a site'} holds '${fqdn}'`;
   if (sites.some((s) => s.name === subdomain)) {
     return `a site is named '${subdomain}'`;

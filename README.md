@@ -98,6 +98,7 @@ Browser (with imported client certificate):
 - **Tunnel management** -- create, move, reconfigure, and remove tunnels with automatic nginx vhost and TLS certificate generation; each tunnel is carried by one agent and has its own request body limit
 - **Static sites** -- host static files on a managed subdomain or your own domain, with `www`-style redirect aliases on one certificate
 - **User management** -- Authelia user CRUD with TOTP enrollment and QR code generation
+- **Mail** -- invitations by mail, "Reset password" and "Change password" on every sign-in page, and Authelia's one-time codes, through the Gmail API (HTTPS, where the host blocks outbound SMTP) or an SMTP server, kept under the provider's daily limit
 - **Certificate management** -- Let's Encrypt certificate listing, renewal, and mTLS client certificate rotation
 - **Service control** -- start, stop, and restart services with live log streaming via WebSocket
 - **System dashboard** -- CPU, RAM, disk, and uptime monitoring with service health indicators
@@ -117,7 +118,7 @@ Browser (with imported client certificate):
 - **Authelia 2FA for tunneled services** -- all services exposed through tunnels are protected by Authelia with TOTP two-factor authentication.
 - **Gatekeeper authorization** -- tunnel access modes (public, authenticated, restricted) with group-based grants, nginx auth_request caching, and user-friendly access-request pages.
 - **Certificate scoping** -- admin certs get full access; agent certs are capability-scoped (tunnels, services, sites, panel expose, identity, etc.).
-- **Tunnel ownership** -- the Chisel authfile grants each agent only the ports of the tunnels it carries, so one agent cannot take over another's hostname. Agents verify the relay's TLS certificate and keep their Chisel credential out of process arguments. The authfile is readable only by the group Chisel runs as, and ports of Lamaste's own services (3100, 9090, 9091, 9292, 9294) can never be tunnel ports.
+- **Tunnel ownership** -- the Chisel authfile grants each agent only the ports of the tunnels it carries, so one agent cannot take over another's hostname. Agents verify the relay's TLS certificate and keep their Chisel credential out of process arguments. The authfile is readable only by the group Chisel runs as, and ports of Lamaste's own services (3100, 9090, 9091, 9292, 9294, 9295) can never be tunnel ports.
 - **Privilege boundary** -- the panel runs as the unprivileged `lamaste` user and cannot become root. Its sudoers file has no wildcards: fixed `systemctl` lines, `nginx -t`, and three root-owned programs that validate their arguments (`lamaste-priv` installs only the panel's own nginx vhosts, each checked against a directive allow-list). Code in `/opt/lamalibre/lamaste` is root-owned; Chisel and Authelia are pinned, checksum-verified releases installed by `create-lamaste`, and Authelia runs as its own unprivileged account.
 - **Service binding** -- all services bind to `127.0.0.1` only. nginx is the sole public-facing service.
 - **UFW firewall** -- only ports 22 (SSH, disabled after setup), 80 (HTTP redirect), 443 (HTTPS), and 9292 (panel) are open.

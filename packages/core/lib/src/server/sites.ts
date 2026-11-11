@@ -160,7 +160,8 @@ export class SiteError extends Error {
       | 'DNS_MISMATCH'
       | 'AUTHELIA_FAILED'
       | 'INVALID_ALIAS'
-      | 'ALIAS_IN_USE',
+      | 'ALIAS_IN_USE'
+      | 'MAIL_SENDER_HOST',
   ) {
     super(message);
     this.name = 'SiteError';
@@ -230,17 +231,24 @@ function assertSignInDomain(fqdn: string, domains: readonly string[]): void {
   }
 }
 
-/** What serves a hostname: a tunnel, a site, or a site's alias (by the site's name). */
+/**
+ * What holds a hostname: a tunnel, a site, a site's alias (by the site's
+ * name), or a mail sender's domain (by the domain) — a sending subdomain
+ * carries MX and TXT records, so the relay's wildcard no longer answers
+ * for it and nothing can be served there (packages/core/docs/mail-design.md D6).
+ */
 export type HostnameHolder =
   | { readonly kind: 'tunnel'; readonly name: string }
   | { readonly kind: 'site'; readonly name: string }
-  | { readonly kind: 'alias'; readonly name: string };
+  | { readonly kind: 'alias'; readonly name: string }
+  | { readonly kind: 'mail-sender'; readonly name: string };
 
 /**
- * Who serves `fqdn` among `tunnels` (an internal plugin tunnel has no
+ * Who holds `fqdn` among `mailSenderDomains` (core `mailSenderDomains` of
+ * the relay's mail records), `tunnels` (an internal plugin tunnel has no
  * hostname) and `sites` (their hostnames and aliases), leaving out the site
  * `selfSiteId` — or null. Hostnames compare case-insensitively. A hostname
- * is served by at most one of them.
+ * is held by at most one of them.
  */
 export function hostnameHolder(
   fqdn: string,
@@ -248,13 +256,18 @@ export function hostnameHolder(
     tunnels = [],
     sites = [],
     selfSiteId = null,
+    mailSenderDomains = [],
   }: {
     tunnels?: ReadonlyArray<{ readonly fqdn: string | null }>;
     sites?: ReadonlyArray<Pick<SiteEntry, 'id' | 'name' | 'fqdn' | 'aliases'>>;
     selfSiteId?: string | null;
+    mailSenderDomains?: readonly string[];
   },
 ): HostnameHolder | null {
   const wanted = fqdn.toLowerCase();
+  if (mailSenderDomains.some((domain) => domain.toLowerCase() === wanted)) {
+    return { kind: 'mail-sender', name: wanted };
+  }
   const tunnel = tunnels.find((t) => t.fqdn?.toLowerCase() === wanted);
   if (tunnel) return { kind: 'tunnel', name: wanted };
   for (const site of sites) {
@@ -276,6 +289,7 @@ function validateAliases(
   sites: readonly SiteEntry[],
   tunnels: ReadonlyArray<{ fqdn: string | null }>,
   relayDomains: readonly string[],
+  mailSenderDomains: readonly string[],
 ): string[] {
   const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
   if (normalised.length > MAX_SITE_ALIASES) {
@@ -291,7 +305,18 @@ function validateAliases(
     if (isRelayHost(alias, relayDomains)) {
       throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
     }
-    const holder = hostnameHolder(alias, { tunnels, sites, selfSiteId: selfId });
+    const holder = hostnameHolder(alias, {
+      tunnels,
+      sites,
+      selfSiteId: selfId,
+      mailSenderDomains,
+    });
+    if (holder?.kind === 'mail-sender') {
+      throw new SiteError(
+        `'${alias}' sends the relay's mail — it serves no site`,
+        'MAIL_SENDER_HOST',
+      );
+    }
     if (holder?.kind === 'tunnel') {
       throw new SiteError(`'${alias}' is already in use by a tunnel`, 'ALIAS_IN_USE');
     }
@@ -336,6 +361,8 @@ export interface CreateSiteOptions {
    * custom site or an alias never takes one before its domain goes live.
    */
   relayDomains: readonly string[];
+  /** The domains of the relay's mail senders: never a site's hostname or alias (D6). */
+  mailSenderDomains?: readonly string[] | undefined;
   email: string;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
@@ -401,7 +428,14 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
 
   const tunnels = await tunnelState.readTunnels();
 
-  const holder = hostnameHolder(fqdn, { tunnels, sites: existingSites });
+  const mailSenderDomains = opts.mailSenderDomains ?? [];
+  const holder = hostnameHolder(fqdn, { tunnels, sites: existingSites, mailSenderDomains });
+  if (holder?.kind === 'mail-sender') {
+    throw new SiteError(
+      `Domain '${fqdn}' sends the relay's mail — it serves no site`,
+      'MAIL_SENDER_HOST',
+    );
+  }
   if (holder?.kind === 'tunnel') {
     throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
@@ -424,6 +458,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     existingSites,
     tunnels,
     opts.relayDomains,
+    mailSenderDomains,
   );
 
   const id = crypto.randomUUID();
@@ -650,6 +685,8 @@ export interface UpdateSiteOptions {
    * custom site or an alias never takes one before its domain goes live.
    */
   relayDomains: readonly string[];
+  /** The domains of the relay's mail senders: never a site's alias (D6). */
+  mailSenderDomains?: readonly string[] | undefined;
   /** Needed only when aliases change on a live site. */
   email?: string | undefined;
   serverIp?: string | undefined;
@@ -726,6 +763,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
       sites,
       tunnels,
       opts.relayDomains,
+      opts.mailSenderDomains ?? [],
     );
   }
 

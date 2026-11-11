@@ -60,6 +60,7 @@ import {
   tunnelStateDeps,
 } from '../../lib/tunnel-deps.js';
 import { reconcileNativeClientHosts } from '../../lib/native-apps.js';
+import { mailSenderHostnames } from '../../lib/mail.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
@@ -244,7 +245,11 @@ function maxBodyCeiling(request) {
  * every workflow giving a site a hostname holds too.
  */
 async function siteServing(fqdn) {
-  const holder = hostnameHolder(fqdn, { sites: await readSites() });
+  const holder = hostnameHolder(fqdn, {
+    sites: await readSites(),
+    mailSenderDomains: await mailSenderHostnames(),
+  });
+  if (holder?.kind === 'mail-sender') return "by the relay's mail (a sending domain)";
   return holder ? `by a static site ('${holder.name}')` : null;
 }
 

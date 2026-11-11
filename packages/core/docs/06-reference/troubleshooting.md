@@ -227,7 +227,7 @@ Every tunnel belongs to one agent, and the Chisel server lets each agent bind on
 
 **Cause 3a: The tunnel is withheld.**
 
-A tunnel on a reserved port (3100, 9090, 9091, 9292, 9294), or two tunnels on the same port — only possible in state from before these checks — is granted to no agent and left out of `agent-config`. The panel logs `Tunnels on a reserved port or a port another tunnel also claims are carried by no agent` at startup. **Fix:** delete the tunnel and recreate it on a free port.
+A tunnel on a reserved port (3100, 9090, 9091, 9292, 9294, 9295), or two tunnels on the same port — only possible in state from before these checks — is granted to no agent and left out of `agent-config`. The panel logs `Tunnels on a reserved port or a port another tunnel also claims are carried by no agent` at startup. **Fix:** delete the tunnel and recreate it on a free port.
 
 **Cause 3b: The agent carries no tunnels, or its tunnels were stopped.**
 

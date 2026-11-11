@@ -1,26 +1,37 @@
 import { z } from 'zod';
-import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
+import {
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+  USERNAME_REGEX,
+  adminInvitationMailDefault,
+} from '@lamalibre/lamaste';
 import { readUsersRaw } from '../../lib/authelia.js';
 import { listDirectoryUsers } from '../../lib/directory.js';
 import {
+  delegatedReissueExpiry,
   disableInvitees,
   invitationPolicyView,
   scheduleInvitationSweep,
   setInvitationPolicy,
 } from '../../lib/delegated-invitations.js';
+import { invitationLink, mailInvitation } from '../../lib/invitation-mail.js';
 import {
+  adminReissueExpiry,
   createAdminInvitation,
+  getInvitation,
+  invitationMailState,
   isFulfilled,
   listInvitations,
+  reissueInvitationLink,
   revokeOrDeleteInvitation,
 } from '../../lib/invitations.js';
+import { findPlugin } from '../../lib/plugins.js';
 import {
   MembershipInputSchema,
   assertAssignableGroups,
   domainsForNewUser,
   externalMemberGroupsError,
   invitationMemberships,
-  invitationSignInDomain,
 } from '../../lib/domains.js';
 import { sendFailure } from '../../lib/app-error.js';
 import { recordAuditBestEffort } from '../../lib/audit.js';
@@ -88,6 +99,21 @@ function adminView(invitation, usernames) {
     fulfilled: isFulfilled(invitation),
     // 4.8's field, kept for its clients
     used: invitation.status === 'accepted',
+    mail: invitationMailState(invitation),
+    reissuedAt: invitation.reissuedAt,
+  };
+}
+
+/** What a create or a reissue answers of the invitation (never its token's hash). */
+function madeView(invitation) {
+  return {
+    id: invitation.id,
+    kind: invitation.kind,
+    username: invitation.username,
+    email: invitation.email,
+    groups: invitation.groups,
+    createdAt: invitation.createdAt,
+    expiresAt: invitation.expiresAt,
   };
 }
 
@@ -112,7 +138,14 @@ const CreateInvitationSchema = z.object({
   // them). Required while the relay has two or more; with one, the user
   // becomes its member.
   domains: z.array(MembershipInputSchema).max(50).optional(),
+  // Whether the link is mailed (mail-design.md §6.1). Omitted: mailed
+  // unless the invitation grants `admins` or a `feria-*` group (core
+  // `adminInvitationMailDefault`) — such a link is handed over another way.
+  mail: z.boolean().optional(),
 });
+
+/** `POST /api/invitations/:id/reissue` — whether the new link is mailed (default as on creation). */
+const ReissueSchema = z.object({ mail: z.boolean().optional() }).strict();
 
 export default async function invitationRoutes(fastify, _opts) {
   // GET /api/invitations — the newest invitations, both kinds, optionally of
@@ -207,23 +240,88 @@ export default async function invitationRoutes(fastify, _opts) {
       );
       // On the sign-in page of the first domain it names (the invitation
       // page is served on every domain's auth portal).
-      const inviteDomain = await invitationSignInDomain(invitation);
-      // The token in the fragment: no server log keeps it (the page posts it).
-      const inviteUrl = inviteDomain ? `https://auth.${inviteDomain}/invite#${token}` : null;
+      const inviteUrl = await invitationLink(invitation, token);
+      // `mail: null` — not mailed, as the administrator chose (or the default for
+      // an administrator's or a registry group's invitation).
+      const mail =
+        (body.mail ?? adminInvitationMailDefault(body.groups))
+          ? await mailInvitation(invitation, token, { sendClass: 'admin', logger: request.log })
+          : null;
 
       return reply.code(201).send({
         ok: true,
-        invitation: {
-          id: invitation.id,
-          username: invitation.username,
-          email: invitation.email,
-          groups: invitation.groups,
-          createdAt: invitation.createdAt,
-          expiresAt: invitation.expiresAt,
-        },
+        invitation: madeView(invitation),
         inviteUrl,
         token,
+        mail,
       });
+    },
+  );
+
+  // POST /api/invitations/:id/reissue — a new link for a pending invitation
+  // (an expired one too), either kind: the old link stops working, the new
+  // one is mailed and answered once (mail-design.md §6.1)
+  fastify.post(
+    '/invitations/:id/reissue',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const { id } = IdParamSchema.parse(request.params);
+      const options = ReissueSchema.parse(request.body ?? {});
+      let made;
+      let plugin = null;
+      try {
+        const found = await getInvitation(id);
+        if (!found)
+          return reply.code(404).send({ error: 'Invitation not found', code: 'not_found' });
+        if (found.kind === 'admin' && found.username) {
+          // The username may have been taken since (another way than this invitation).
+          const usersData = await readUsersRaw().catch(() => ({ users: {} }));
+          if (usersData.users?.[found.username]) {
+            return reply.code(409).send({
+              error: 'Username already exists as an Authelia user',
+              code: 'username_taken',
+            });
+          }
+        }
+        if (found.kind === 'delegated') plugin = await findPlugin(found.plugin);
+        made = await reissueInvitationLink(id, {
+          plugin: found.plugin ?? null,
+          expiry:
+            found.kind === 'delegated'
+              ? await delegatedReissueExpiry(found.plugin)
+              : (row, _db, now) => adminReissueExpiry(row, now),
+        });
+      } catch (err) {
+        return sendFailure(request, reply, err, 'Failed to give the invitation a new link');
+      }
+      const { invitation, token } = made;
+      await recordAuditBestEffort(
+        {
+          actor: actorFromRequest(request),
+          action: 'invitation.reissued',
+          plugin: invitation.plugin,
+          details: { invitationId: id, kind: invitation.kind, expiresAt: invitation.expiresAt },
+        },
+        request.log,
+      );
+      const inviteUrl = await invitationLink(invitation, token);
+      const mail =
+        (options.mail ?? adminInvitationMailDefault(invitation.groups ?? []))
+          ? await mailInvitation(invitation, token, {
+              sendClass: 'admin',
+              plugin,
+              logger: request.log,
+            })
+          : null;
+      return {
+        ok: true,
+        invitation: madeView(invitation),
+        inviteUrl,
+        token,
+        mail,
+      };
     },
   );
 

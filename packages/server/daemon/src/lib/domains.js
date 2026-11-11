@@ -1713,7 +1713,24 @@ export async function activateDomain(name, { actor, logger }) {
   );
   const { bustGatekeeperSessions } = await import('./gatekeeper-client.js');
   await bustGatekeeperSessions();
+  // Its portal's reset link, and Authelia's when it is the first domain that sends.
+  await syncMailAfterDomainChange(logger);
   return activated;
+}
+
+/**
+ * Carry a change of the relay's domains to its mail (lib/mail.js
+ * `syncMail`): which portals link a reset page, Authelia's reset link. A
+ * failure is logged; the next mail change or start applies it.
+ */
+async function syncMailAfterDomainChange(logger) {
+  try {
+    const { syncMail } = await import('./mail.js');
+    const { warnings } = await syncMail({ logger });
+    if (warnings.length > 0) logger?.warn({ warnings }, 'The relay’s mail was not fully applied');
+  } catch (err) {
+    logger?.warn({ err: err?.message }, 'The relay’s mail was not applied after a domain change');
+  }
 }
 
 /**
@@ -1901,6 +1918,8 @@ export async function removeDomain(name, { actor, logger }) {
       });
     });
   }
+  // A transport of its own went with it (state.db cascade): the reset links.
+  if (removed.active) await syncMailAfterDomainChange(logger);
   // No registry token can depend on a removed domain: the registry's
   // domains cannot be removed (`domain_in_use`).
   return {

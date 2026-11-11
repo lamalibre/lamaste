@@ -915,6 +915,10 @@ export async function identityTick(logger) {
       // The brands' renderings, as their records now say: a rendering a
       // failure left behind is tried again (compare-first; never throws).
       await reconcileAuthBranding({ logger });
+      // Authelia's mail listener, while another program holds its port
+      // (mail-design.md §5; nothing otherwise; never throws).
+      const { retryMailSubmission } = await import('./mail.js');
+      await retryMailSubmission(logger);
       // Invitations: a restored invitations.json imported, acceptances a
       // crash left claimed settled, delegated acceptances whose grants did
       // not all land completed, ended invitations pruned (never throws).

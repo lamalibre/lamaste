@@ -94,11 +94,17 @@ function payload(target, aud = RELAY_PANEL_AUDIENCE) {
   };
 }
 
-test('isDelegatedInvitationsUrl: exactly the route, or one invitation id under it', () => {
+test('isDelegatedInvitationsUrl: exactly the route, one invitation id under it, or its reissue', () => {
   assert.equal(delegatedInvitationsApiPath('corral'), BASE);
   assert.throws(() => delegatedInvitationsApiPath('Corral'), /Invalid plugin route/);
   assert.throws(() => delegatedInvitationsApiPath('users'), /Invalid plugin route/);
-  for (const url of [BASE, `${BASE}?x=1`, `${BASE}/${ID}`, `${BASE}/${ID}?a=b`]) {
+  for (const url of [
+    BASE,
+    `${BASE}?x=1`,
+    `${BASE}/${ID}`,
+    `${BASE}/${ID}?a=b`,
+    `${BASE}/${ID}/reissue`,
+  ]) {
     assert.equal(isDelegatedInvitationsUrl(url, 'corral'), true, url);
   }
   for (const url of [
@@ -106,6 +112,11 @@ test('isDelegatedInvitationsUrl: exactly the route, or one invitation id under i
     `${BASE}x`,
     `${BASE}/${ID}/`,
     `${BASE}/${ID}/more`,
+    `${BASE}/${ID}/reissue/`,
+    `${BASE}/${ID}/reissuex`,
+    `${BASE}/${ID}/reissue/reissue`,
+    `${BASE}/reissue`,
+    `${BASE}/${ID}reissue`,
     `${BASE}/${ID.toUpperCase()}`,
     `${BASE}/not-an-id`,
     `${BASE}/..`,

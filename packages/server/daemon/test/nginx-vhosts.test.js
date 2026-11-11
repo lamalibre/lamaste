@@ -485,8 +485,8 @@ test('a user surface is never rendered on a public vhost, for an invalid route o
 });
 
 test('every location that proxies a browser to the panel clears a client’s relay assertion', async () => {
-  // Only a user-surface location and an auth portal's inviter API set one —
-  // from Gatekeeper's answer.
+  // Only a user-surface location, an auth portal's inviter API and its
+  // password change set one — from Gatekeeper's answer.
   let checked = 0;
   for (const name of await readdir(captured)) {
     const text = await readFile(path.join(captured, name), 'utf8');
@@ -495,7 +495,8 @@ test('every location that proxies a browser to the panel clears a client’s rel
       checked += 1;
       const userSurface =
         /^(= |\^~ )?\/api\/[a-z0-9-]+\/app\/?$/.test(matcher) ||
-        matcher === '^~ /api/delegated-invitations/';
+        matcher === '^~ /api/delegated-invitations/' ||
+        matcher === '= /api/account/password';
       assert.ok(
         body.includes(
           userSurface
@@ -507,11 +508,12 @@ test('every location that proxies a browser to the panel clears a client’s rel
       if (!userSurface) assert.doesNotMatch(body, /relay_assertion/, `${name} ${matcher}`);
     }
   }
-  // panel (8: the site upload location too) + primary auth (5) + second
-  // and branded domains' auth (4 each: the invitation API, the inviter's
-  // API, the token broker's two endpoints) + agent-panel authz (1) + user
-  // surfaces (2 × 3)
-  assert.equal(checked, 28);
+  // panel (8: the site upload location too) + primary auth (8: the token
+  // broker's two endpoints and the mail consent callback too) + second
+  // and branded domains' auth (6 each: the invitation API, the inviter's
+  // API, the token broker's two endpoints, the forgot-password API, the
+  // change-password API) + agent-panel authz (1) + user surfaces (2 × 3)
+  assert.equal(checked, 35);
 });
 
 test('no location proxying to a tunnel or agent backend passes Authelia’s session cookie on', async () => {
@@ -595,13 +597,20 @@ test('a second domain’s auth portal serves Authelia and invitations — never 
   // The rate-limit zone is an http-level name: declared once, by the primary's portal.
   assert.doesNotMatch(text, /limit_req_zone/);
   assert.doesNotMatch(text, /user-access/);
-  // Authelia's forward auth only ever for the desktop's sign-in (primary);
-  // the one auth request here is the inviter API's, to Gatekeeper.
+  // The desktop's sign-in is the primary's alone; the auth requests here are
+  // the inviter API's, to Gatekeeper, the change-password page's, to
+  // Authelia, and its API's, to Gatekeeper (mail-design.md §6.3).
   assert.doesNotMatch(text, /\/internal\/authelia\/authz/);
   assert.deepEqual(text.match(/auth_request \S+;/g), [
     'auth_request off;',
     'auth_request /internal/lamaste/delegated-invitations-authz;',
+    'auth_request /internal/lamaste/account-authz;',
+    'auth_request /internal/lamaste/account-authz;',
+    'auth_request off;',
+    'auth_request /internal/lamaste/account-api-authz;',
   ]);
+  // Google returns the mail consent to the primary's portal alone.
+  assert.doesNotMatch(text, /mail\/google\/callback/);
   const primary = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
   assert.match(primary, /limit_req_zone \$binary_remote_addr zone=user_access_auth/);
   assert.match(primary, /location \/api\/user-access\/authorize \{/);
@@ -687,7 +696,7 @@ test('every auth portal serves the domain’s brand overrides and rewrites Authe
       ['= /favicon.ico', '@authelia'],
       ['= /static/media/logo.png', '@authelia'],
       ['/locales/', '@authelia'],
-      ['= /brand.css', '=404'],
+      ['= /brand.css', '@stock_css'],
     ]) {
       const body = locationBody(text, matcher);
       assert.ok(body.includes(`root /var/www/lamaste/auth/${domain};`), `${domain} ${matcher}`);
@@ -699,6 +708,10 @@ test('every auth portal serves the domain’s brand overrides and rewrites Authe
       );
       assert.doesNotMatch(body, /proxy_pass|sub_filter/, matcher);
     }
+    // The stock stylesheet (the change-password link's rules) for a domain without a rendering.
+    const stockCss = locationBody(text, '@stock_css');
+    assert.ok(stockCss.includes('root /var/www/lamaste/auth-stock;'), domain);
+    assert.ok(stockCss.includes('try_files /brand.css =404;'), domain);
     // Authelia's own answer: every header the portal's catch-all sends, no rewrite.
     const fallback = locationBody(text, '@authelia');
     assert.match(fallback, /proxy_pass http:\/\/127\.0\.0\.1:9091;/);
@@ -744,11 +757,22 @@ test('every auth portal serves the domain’s brand overrides and rewrites Authe
     assert.doesNotMatch(text, /alias \/var\/www\/lamaste\/invite/);
   }
 
-  // Unbranded: the light theme, no logo (the placeholder never shown), no stylesheet — the stock page.
+  // Unbranded: the light theme, no logo (the placeholder never shown) — the
+  // stock page but for the change-password link and its stylesheet, the
+  // stock one (mail-design.md §6.3).
   const stock = locationBody(unbranded, '/');
   assert.ok(stock.includes(`sub_filter 'data-theme="light"' 'data-theme="light"';`));
   assert.ok(stock.includes(`sub_filter 'data-logooverride="true"' 'data-logooverride="false"';`));
-  assert.doesNotMatch(stock, /brand\.css/);
+  assert.ok(
+    stock.includes(`sub_filter '</head>' '<link rel="stylesheet" href="/brand.css"></head>';`),
+  );
+  assert.ok(
+    stock.includes(
+      `sub_filter '</body>' '<a id="lamaste-account-password" href="/account/password">Change password</a></body>';`,
+    ),
+  );
+  // Without mail anywhere, nothing touches the reset link (Authelia's is disabled).
+  assert.doesNotMatch(stock, /data-resetpassword/);
   // Branded with a logo: its theme, its logo, its stylesheet.
   const dark = locationBody(branded, '/');
   assert.ok(dark.includes(`sub_filter 'data-theme="light"' 'data-theme="dark"';`));
@@ -909,6 +933,26 @@ const withoutHashes = (text) => text.replace(/'sha256-[A-Za-z0-9+/=]{44}'/g, "'s
  */
 const withoutTokenBroker = (text) =>
   text.replace(/\n {4}location = \/api\/oidc\/(?:token|revocation) \{\n[^}]*\}\n/g, '');
+/**
+ * An auth vhost without what 4.14's mail added (mail-design.md §5, §6): the
+ * account locations, the consent callback (primary), the stock stylesheet
+ * fallback, the index's mail filters and — on a domain with neither brand
+ * nor language — the stylesheet link every portal now has.
+ */
+function withoutMail(text, domain, { primary, styled }) {
+  const fqdn = `auth.${domain}`;
+  let out = text.replace(nginx.accountLocations(domain, fqdn), '');
+  if (primary) out = out.replace(nginx.mailCallbackLocation(fqdn), '');
+  out = out
+    .replace('try_files $uri @stock_css;', 'try_files $uri =404;')
+    .replace(
+      /\n\n {4}# The stylesheet of a domain with neither brand nor language:[\s\S]*?\n {4}\}/,
+      '',
+    )
+    .replace(/\n {8}# The domain's mail \(mail-design[\s\S]*?(?=\n {8}sub_filter '<\/head>')/, '');
+  if (!styled) out = out.replace(/\n {8}sub_filter '<\/head>' [^\n]*/, '');
+  return out;
+}
 
 test('a domain without a page language keeps its 4.9.0 auth vhost but for the pages’ CSP hashes (regression pin)', async () => {
   for (const [name, domain, opts] of [
@@ -926,7 +970,12 @@ test('a domain without a page language keeps its 4.9.0 auth vhost but for the pa
     }).config;
     assert.notEqual(now, before, `${name}: the pages' hashes changed with their scripts`);
     assert.match(now, /location = \/api\/oidc\/token \{/, `${name}: the token broker`);
-    assert.equal(withoutHashes(withoutTokenBroker(now)), withoutHashes(before), name);
+    const withoutMailNow = withoutMail(now, domain, {
+      primary: opts.primary,
+      styled: opts.branding !== null,
+    });
+    assert.notEqual(withoutMailNow, now, `${name}: 4.14's mail is what was taken out`);
+    assert.equal(withoutHashes(withoutTokenBroker(withoutMailNow)), withoutHashes(before), name);
     // `language` absent is `language: null`.
     assert.equal(
       nginx.renderAuthVhost(domain, `/etc/letsencrypt/live/auth.${domain}`, opts).config,
@@ -1287,4 +1336,142 @@ test('a web surface serves the routes joined to it beside its own, and its nativ
   ).config;
   assert.doesNotThrow(() => validateVhost(down));
   assert.match(down, /location = \/\.well-known\/apple-app-site-association \{/);
+});
+
+// ---------------------------------------------------------------------------
+// Mail (packages/core/docs/mail-design.md §5, §6)
+// ---------------------------------------------------------------------------
+
+test('each portal links its own reset page, none where its domain cannot send — what lamaste-priv admits', () => {
+  const primaryUrl = 'https://auth.alpha.example/reset';
+  const render = (domain, mail, opts = {}) =>
+    nginx.renderAuthVhost(domain, undefined, { primary: false, mail, ...opts }).config;
+  const portal = (text) => locationBody(text, '/');
+
+  // The primary: Authelia's own URL is already its own — nothing to rewrite.
+  const primary = render(
+    'alpha.example',
+    { primaryResetUrl: primaryUrl, domainResetUrl: primaryUrl },
+    { primary: true },
+  );
+  assert.doesNotMatch(portal(primary), /data-resetpassword/);
+  // Another domain that can send: Authelia's URL replaced by its own.
+  const sending = render('beta.example', {
+    primaryResetUrl: primaryUrl,
+    domainResetUrl: 'https://auth.beta.example/reset',
+  });
+  assert.ok(
+    portal(sending).includes(
+      `sub_filter 'data-resetpasswordcustomurl="${primaryUrl}"' 'data-resetpasswordcustomurl="https://auth.beta.example/reset"';`,
+    ),
+  );
+  // One that cannot: the link switched off and emptied — never Authelia's own reset.
+  const silent = render('beta.example', { primaryResetUrl: primaryUrl, domainResetUrl: null });
+  assert.ok(
+    portal(silent).includes(`sub_filter 'data-resetpassword="true"' 'data-resetpassword="false"';`),
+  );
+  assert.ok(
+    portal(silent).includes(
+      `sub_filter 'data-resetpasswordcustomurl="${primaryUrl}"' 'data-resetpasswordcustomurl=""';`,
+    ),
+  );
+  // In Turkish, the change-password link as ASCII character references.
+  const turkish = render(
+    'beta.example',
+    { primaryResetUrl: primaryUrl, domainResetUrl: 'https://auth.beta.example/reset' },
+    { language: 'tr' },
+  );
+  assert.match(portal(turkish), /href="\/account\/password">&#350;ifre de&#287;i&#351;tir<\/a>/);
+  for (const text of [primary, sending, silent, turkish]) {
+    assert.doesNotThrow(() => validateVhost(text));
+    assertAsciiDirectives(text, 'mail');
+  }
+  // Only an auth host's own /reset reaches a root-validated file.
+  for (const mail of [
+    { primaryResetUrl: 'https://evil.example/reset', domainResetUrl: null },
+    { primaryResetUrl: primaryUrl, domainResetUrl: 'https://auth.gamma.example/reset' },
+    { primaryResetUrl: "https://auth.alpha.example/reset' ; x", domainResetUrl: null },
+    { primaryResetUrl: primaryUrl },
+    null,
+  ]) {
+    assert.throws(
+      () => render('beta.example', mail),
+      /Invalid auth vhost mail/,
+      JSON.stringify(mail),
+    );
+  }
+});
+
+test('the account locations: the reset API public, the change-password page and API behind two-factor Authelia; the consent callback on the primary alone', () => {
+  const second = nginx.renderAuthVhost('beta.example', undefined, { primary: false }).config;
+  const primary = nginx.renderAuthVhost('alpha.example', undefined, { primary: true }).config;
+  for (const [text, fqdn] of [
+    [second, 'auth.beta.example'],
+    [primary, 'auth.alpha.example'],
+  ]) {
+    // The forgot-password page: the rendering's, else the stock one; core's CSP.
+    const page = locationBody(text, '= /reset');
+    assert.match(page, /try_files \/reset\/index\.html @reset;/);
+    assert.match(locationBody(text, '@reset'), /root \/var\/www\/lamaste\/reset;/);
+    assert.match(
+      page,
+      /add_header Content-Security-Policy "default-src 'none'; script-src 'sha256-/,
+    );
+    // Its API: public, to the panel under the portal's literal name, nothing of the client's identity.
+    const resetApi = locationBody(text, '^~ /api/account/reset/');
+    assert.doesNotMatch(resetApi, /auth_request/);
+    for (const line of [
+      `proxy_set_header Host ${fqdn};`,
+      'proxy_set_header X-Forwarded-Host "";',
+      'proxy_set_header Remote-User "";',
+      'proxy_set_header Cookie "";',
+      'proxy_set_header X-Lamalibre-Relay-Assertion "";',
+      'proxy_pass http://127.0.0.1:3100;',
+      'client_max_body_size 16k;',
+    ]) {
+      assert.ok(resetApi.includes(line), `${fqdn} reset API: ${line}`);
+    }
+    // The change-password page: Authelia's forward auth, a redirect to the sign-in.
+    for (const matcher of ['= /account/password', '@account_password']) {
+      const body = locationBody(text, matcher);
+      assert.match(body, /auth_request \/internal\/lamaste\/account-authz;/, matcher);
+      assert.match(body, /error_page 401 =302 \$redirection_url;/, matcher);
+    }
+    // Its API: the user as Gatekeeper vouched for them — never a Remote-User.
+    const api = locationBody(text, '= /api/account/password');
+    assert.match(api, /auth_request \/internal\/lamaste\/account-api-authz;/);
+    assert.match(
+      api,
+      /auth_request_set \$relay_assertion \$upstream_http_x_lamalibre_relay_assertion;/,
+    );
+    assert.ok(api.includes('proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;'));
+    assert.ok(api.includes('proxy_set_header Remote-User "";'));
+    assert.doesNotMatch(api, /Remote-User \$/);
+    assert.doesNotMatch(api, /X-Lamalibre-Relay-Assertion "";/);
+    assert.match(api, /error_page 401 = \/internal\/lamaste\/account-401;/);
+    assert.match(api, /error_page 403 = \/internal\/lamaste\/account-403;/);
+    const apiAuthz = locationBody(text, '= /internal/lamaste/account-api-authz');
+    assert.match(apiAuthz, /internal;/);
+    const domain = fqdn.slice('auth.'.length);
+    assert.ok(apiAuthz.includes(`proxy_pass http://127.0.0.1:9294/authz/account/${domain};`));
+    assert.ok(apiAuthz.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`));
+    assert.ok(apiAuthz.includes(`proxy_set_header Host ${fqdn};`));
+    // The subrequest names this portal, never the client's Host.
+    const authz = locationBody(text, '= /internal/lamaste/account-authz');
+    assert.match(authz, /internal;/);
+    assert.ok(authz.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`));
+    assert.match(authz, /proxy_pass http:\/\/127\.0\.0\.1:9091\/api\/authz\/auth-request;/);
+    assert.doesNotThrow(() => validateVhost(text), fqdn);
+  }
+  assert.doesNotMatch(second, /mail\/google\/callback/);
+  const callback = locationBody(primary, '= /mail/google/callback');
+  for (const line of [
+    'access_log off;',
+    'proxy_set_header Host auth.alpha.example;',
+    'proxy_set_header X-Forwarded-Host "";',
+    'proxy_set_header Cookie "";',
+    'proxy_pass http://127.0.0.1:3100;',
+  ]) {
+    assert.ok(callback.includes(line), line);
+  }
 });

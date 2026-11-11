@@ -270,6 +270,7 @@ lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 #   lamaste-priv authelia-totp <username>                    secret on stdin
 #   lamaste-priv authelia-user purge-second-factors <username>  TOTP + WebAuthn deleted
 #   lamaste-priv authelia-user has-oidc-identifier <username>   prints yes or no
+#   lamaste-priv authelia-user verify-totp <username>          code on stdin; prints ok <step>, no or none
 #   lamaste-priv self-update <version>                       create-lamaste in a transient unit
 #   lamaste-certbot issue <email> <cert-name> <domain>...    certbot certonly --nginx
 #   lamaste-certbot renew <cert-name> [force] | renew-all | list
