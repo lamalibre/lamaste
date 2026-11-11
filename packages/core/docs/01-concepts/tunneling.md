@@ -225,7 +225,7 @@ It **fails closed**: if the authfile cannot be established, Chisel is stopped **
 
 ### Installation
 
-On the server, Chisel is installed by `npx @lamalibre/create-lamaste` — as root, together with its hardened systemd unit (`User=nobody`, `Group=lamaste-chisel`, `NoNewPrivileges`, `ProtectSystem=strict`, empty `CapabilityBoundingSet`) — and kept at the pinned release by every redeploy. The panel never installs a binary or writes the unit; onboarding only checks the binary exists, creates the server key and authfile, and starts the service. Both the server installer and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
+On the server, Chisel is installed by `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` — as root, together with its hardened systemd unit (`User=nobody`, `Group=lamaste-chisel`, `NoNewPrivileges`, `ProtectSystem=strict`, empty `CapabilityBoundingSet`) — and kept at the pinned release by every redeploy. The panel never installs a binary or writes the unit; onboarding only checks the binary exists, creates the server key and authfile, and starts the service. Both the server installer and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
 
 ```
 https://github.com/jpillora/chisel/releases/download/v1.12.0/chisel_1.12.0_<os>_<arch>.gz
@@ -322,7 +322,7 @@ sudo systemctl restart chisel
 
 ```bash
 # Install globally, then set up the agent (interactive)
-npm install -g @lamalibre/lamaste-agent
+npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent
 lamaste-agent setup --label <label>
 
 # Apply tunnel changes now (the sync timer does it within 30 s anyway)

@@ -491,8 +491,17 @@ pub async fn local_install_desktop_app(name: String) -> Result<String, String> {
         // Convention: @lamalibre/<name>-server -> @lamalibre/install-<name>-desktop
         let installer = format!("@lamalibre/install-{}-desktop", name);
 
+        // `@lamalibre` from the hosted Feria, or the registry npm's
+        // configuration names for it — never npm's default registry.
+        let registry = crate::branding::resolve_lamalibre_registry("npm")?;
         let output = Command::new("npx")
-            .args(["--yes", &installer, "--yes"])
+            .args([
+                "--yes",
+                crate::branding::lamalibre_registry_arg(&registry).as_str(),
+                &installer,
+                "--yes",
+            ])
+            .env(crate::branding::LAMALIBRE_REGISTRY_ENV, &registry)
             .output()
             .map_err(|e| format!("Failed to run installer: {}", e))?;
 

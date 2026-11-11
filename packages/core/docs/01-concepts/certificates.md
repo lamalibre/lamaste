@@ -29,7 +29,7 @@ For the IP-based admin panel (`https://<ip>:9292`), there is no domain to verify
 
 ### When certificates are issued
 
-- **Self-signed + mTLS certs** — created during `npx @lamalibre/create-lamaste` installation
+- **Self-signed + mTLS certs** — created during `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` installation
 - **Core Let's Encrypt certs** — issued during onboarding for `panel`, `auth`, and `tunnel` subdomains
 - **App Let's Encrypt certs** — issued when you create a new tunnel or a managed static site
 - **Custom-domain site certs** — issued when a custom-domain site's DNS is verified: one certificate lineage, named after the site's domain, covering the domain and every redirect alias (re-issued when aliases change)

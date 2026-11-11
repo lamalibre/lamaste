@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const priv = require(fileURLToPath(new URL('../scripts/lamaste-priv', import.meta.url)));
@@ -347,4 +348,51 @@ test('authelia-user has-oidc-identifier: a username in Authelia’s identifiers 
     assert.equal(priv.exportNamesUsername(exported, absent), false, absent);
   }
   assert.equal(priv.exportNamesUsername('identifiers: []\n', 'ayse'), false);
+});
+
+// ---------------------------------------------------------------------------
+// self-update: where the installer comes from
+// ---------------------------------------------------------------------------
+
+const registryCases = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL('../../../core/lib/test/fixtures/lamalibre-registry-cases.json', import.meta.url),
+    ),
+    'utf8',
+  ),
+);
+
+test("self-update's registry rule matches core's case table", () => {
+  assert.equal(priv.LAMALIBRE_REGISTRY_URL, registryCases.default);
+  for (const c of registryCases.cases) {
+    if (c.refused) {
+      assert.throws(() => priv.chooseLamalibreRegistry(c.configured), JSON.stringify(c.configured));
+    } else {
+      assert.equal(
+        priv.chooseLamalibreRegistry(c.configured),
+        c.registry,
+        JSON.stringify(c.configured),
+      );
+    }
+  }
+});
+
+test("lamaste-priv's registry is core's LAMALIBRE_REGISTRY_URL", async () => {
+  const core = await import('@lamalibre/lamaste');
+  assert.equal(priv.LAMALIBRE_REGISTRY_URL, core.LAMALIBRE_REGISTRY_URL);
+});
+
+test('self-update runs npx with @lamalibre routed to the registry, the version pinned', () => {
+  const argv = priv.selfUpdateArgs('4.14.0', 'https://feria.codelama.com.tr/', 'u1');
+  const npx = argv.indexOf('/usr/bin/npx');
+  assert.ok(npx > 0);
+  assert.deepEqual(argv.slice(npx), [
+    '/usr/bin/npx',
+    '--yes',
+    '--@lamalibre:registry=https://feria.codelama.com.tr/',
+    '@lamalibre/create-lamaste@4.14.0',
+    '--yes',
+  ]);
+  assert.deepEqual(argv.slice(0, 2), ['--unit', 'u1']);
 });

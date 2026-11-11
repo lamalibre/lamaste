@@ -817,6 +817,21 @@ export type { ManifestPackageRefs } from './trusted-scopes.js';
 
 export * from './branding.js';
 
+// Where @lamalibre packages install from (the hosted Feria unless npm's
+// configuration names another registry) — pure; the npm-reading half is in
+// the agent and server subpaths (npm-registry-config.ts)
+export {
+  LAMALIBRE_REGISTRY_CONFIG_KEY,
+  LAMALIBRE_REGISTRY_ENV,
+  PUBLIC_NPM_REGISTRY_HOSTS,
+  isPublicNpmRegistry,
+  LamalibreRegistryError,
+  chooseLamalibreRegistry,
+  lamalibreRegistryArg,
+  lamalibreRegistryEnv,
+  LAMALIBRE_REGISTRY_FLAG,
+} from './lamalibre-registry.js';
+
 // Per-domain branding of the auth pages: the brand record's rules, the
 // image checks and the rendering (browser-safe; the relay's side is in /server)
 export {

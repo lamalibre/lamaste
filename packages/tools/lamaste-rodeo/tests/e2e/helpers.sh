@@ -2944,3 +2944,59 @@ local_sign_in() {
   second=$(curl -sk --max-time 15 ${resolve} -b "$4" -c "$4" -X POST -H 'Content-Type: application/json' -d "$body" "https://auth.$5/api/secondfactor/totp" 2>/dev/null | jq -r '.status // "none"' 2>/dev/null || echo "none")
   SIGN_IN_RESULT="${first} ${second}"
 }
+
+# ---------------------------------------------------------------------------
+# Where Lamaste's packages came from (4.14: the hosted Feria, or the registry
+# npm's configuration names for @lamalibre — on the VMs, the development
+# Feria; never npmjs). Single-VM 43, three-VM 68 and the upgrade suite's 01.
+# ---------------------------------------------------------------------------
+
+# npm_fetch_evidence_script — prints a bash script that, run as root on a VM,
+# lists (sorted, unique) every URL npm on that machine fetched or tried to
+# fetch for @lamalibre, by any user: the cache index of every npm cache
+# (each response npm stored — packuments and tarballs) and npm's debug logs
+# (each request, 404s included; npm keeps the last ten per cache). Each line:
+# "<url>". The VMs' own npm traffic only — nothing here talks to a registry.
+npm_fetch_evidence_script() {
+  cat <<'SCRIPT'
+set -uo pipefail
+mapfile -t dirs < <(find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /snap \) -prune -o \
+  -type d \( -path '*/_cacache/index-v5' -o -name _logs \) -print 2>/dev/null)
+[ "${#dirs[@]}" -eq 0 ] && exit 0
+grep -rhoE 'https?://[^"[:space:]]+/(@|%40)lamalibre[^"[:space:]]*' "${dirs[@]}" 2>/dev/null \
+  | sed -E 's/[),]+$//' | sort -u
+SCRIPT
+}
+
+# public_registry_fetches <evidence> — the lines of <evidence>
+# (npm_fetch_evidence_script's output) that name a public registry or the
+# hosted Feria: a VM must never have asked either for @lamalibre.
+public_registry_fetches() {
+  printf '%s\n' "$1" | grep -E '^https?://(registry\.npmjs\.(org|com)|registry\.yarnpkg\.com|registry\.npmmirror\.com|feria\.codelama\.com\.tr)(:[0-9]+)?/' || true
+}
+
+# dev_feria_fetches <evidence> — the lines naming the development Feria
+# (port 4873): proof the evidence is there to read at all.
+dev_feria_fetches() {
+  printf '%s\n' "$1" | grep -E '^http://[^/]+:4873/' || true
+}
+
+# lamalibre_registry_probe_script — prints a script that, run as root with
+# cwd /opt/lamalibre/lamaste/serverd, resolves the @lamalibre registry the
+# way 4.14 does (core's resolveLamalibreRegistry) for: root; the lamaste
+# account; an npm with no configuration at all (the hosted Feria — resolved
+# only, nothing fetched); and npm's environment naming npmjs (refused).
+# Prints four lines "<case> <result>".
+lamalibre_registry_probe_script() {
+  cat <<'SCRIPT'
+set -uo pipefail
+cd /opt/lamalibre/lamaste/serverd
+probe='const m = await import("@lamalibre/lamaste/server"); try { process.stdout.write(await m.resolveLamalibreRegistry({ cwd: "/" })); } catch (e) { process.stdout.write("refused:" + (e.code || e.name)); }'
+empty="$(mktemp)"
+printf 'root %s\n' "$(node --input-type=module -e "$probe" 2>/dev/null || echo error)"
+printf 'lamaste %s\n' "$(sudo -u lamaste env HOME=/nonexistent node --input-type=module -e "$probe" 2>/dev/null || echo error)"
+printf 'unconfigured %s\n' "$(env npm_config_userconfig="$empty" npm_config_globalconfig="$empty" node --input-type=module -e "$probe" 2>/dev/null || echo error)"
+printf 'npmjs %s\n' "$(env 'npm_config_@lamalibre:registry=https://registry.npmjs.org/' node --input-type=module -e "$probe" 2>/dev/null || echo error)"
+rm -f "$empty"
+SCRIPT
+}

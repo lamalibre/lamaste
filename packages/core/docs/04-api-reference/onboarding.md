@@ -255,7 +255,7 @@ The wildcard check probes `test-lamaste-check.<domain>`. Wildcard DNS is optiona
 
 ### `POST /api/onboarding/provision`
 
-Starts the full stack provisioning process in the background. This configures and starts Chisel and Authelia, issues certbot certificates, and writes nginx vhosts. The Chisel and Authelia binaries and units are installed by `create-lamaste`, not here: if one is missing, the task fails with the error "Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation." (likewise for Authelia). Task IDs are unchanged from earlier versions; only the titles changed.
+Starts the full stack provisioning process in the background. This configures and starts Chisel and Authelia, issues certbot certificates, and writes nginx vhosts. The Chisel and Authelia binaries and units are installed by `create-lamaste`, not here: if one is missing, the task fails with the error "Chisel is not installed. Run `sudo npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on the server to repair the installation." (likewise for Authelia). Task IDs are unchanged from earlier versions; only the titles changed.
 
 Provisioning runs asynchronously. This endpoint returns immediately with a 202 status. Use the WebSocket stream endpoint to follow progress in real time.
 

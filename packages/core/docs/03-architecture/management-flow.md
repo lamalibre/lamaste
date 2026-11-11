@@ -283,7 +283,7 @@ Everything else the panel does needs no rule: the PKI directory (agent CSR signi
 
 The certbot wrappers accept only lowercase DNS hostnames (no wildcards or path characters, at most 100 per certificate) and a syntactically valid email address. Renewals the panel triggers pass `--no-random-sleep-on-renew`, because certbot otherwise sleeps up to about 8 minutes before a non-interactive renewal (a delay meant for `certbot.timer`) while an operator waits.
 
-Redeploying (`npx @lamalibre/create-lamaste` on an existing install) reinstalls the programs, removes retired ones (`lamaste-sign-csr`, `lamaste-pki-rename`), and replaces this file atomically after `visudo -c` accepts it, so upgrades pick up new rules.
+Redeploying (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on an existing install) reinstalls the programs, removes retired ones (`lamaste-sign-csr`, `lamaste-pki-rename`), and replaces this file atomically after `visudo -c` accepts it, so upgrades pick up new rules.
 
 ## File Operation Safety
 

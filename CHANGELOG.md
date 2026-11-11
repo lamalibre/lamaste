@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Lamaste's `@lamalibre/*` packages come from the hosted Feria, `https://feria.codelama.com.tr/`, and no longer from npmjs, frozen at 4.12.0. Every path that installs or checks Lamaste itself names that registry for the `@lamalibre` scope; a release publishes the tag's own packed tarballs to Feria and keeps them on the GitHub Release as the durable copy.
+
+### Added
+
+- **One source of truth for the registry**: `LAMALIBRE_REGISTRY_URL` in core `branding.ts`, its twins in the desktop's `branding.rs` and in `lamaste-priv`, tested against one case table (`core/lib/test/fixtures/lamalibre-registry-cases.json`). The rule (core `lamalibre-registry.ts`; `resolveLamalibreRegistry` in `/agent` and `/server`): npm's own `@lamalibre:registry` wins (a development Feria, as `feria-server setup` writes it); one naming a public registry (`registry.npmjs.org` and its mirrors) is refused with `lamalibre_registry_refused`; otherwise the hosted Feria. The choice is passed to npm explicitly (`npm_config_@lamalibre:registry` or `--@lamalibre:registry=`), never left to npm's default registry. `LAMALIBRE_REGISTRY_FLAG` for printed commands.
+- **Release CI publishes what it packed.** `release.yml` packs every release package at the tag (`.github/scripts/pack-release.mjs`: npm's integrity checked against the bytes, the `package.json` inside against the name and version) and attaches the tarballs and `release-manifest.json` to the GitHub Release; it then calls `feria.yml`, which publishes those assets through the existing GitHub OIDC login (`publish-to-feria.mjs`: the manifest must list exactly the release's packages, every tarball must match its integrity, a version Feria holds with other bytes is never replaced, Feria must report the same integrity afterwards; `latest`, or `release-<major>.<minor>` for a patch of an older line, `next` for a prerelease). `feria.yml` runs by hand on a tag to publish a release again or check one (`dry_run`).
+- Rodeo: three-VM 68, single-VM 43 and upgrade 01's section 6 resolve the rule on the VM and read npm's cache index and debug logs of every user on every VM: `@lamalibre` requests to the development Feria, none to a public registry or the hosted Feria. The tier `node-ready` also routes `@lamalibre` in npm's global npmrc, so the panel's and agents' service accounts follow it.
+
+### Changed
+
+- **`create-lamaste`**: every `npm install` (panel server, `lamaste-server` CLI, server-ui build, Gatekeeper) routes `@lamalibre` by the rule (`lib/registry.js`, resolved once per run). **The redeploy deploys the panel server from its own `vendor/`** like the full install (`deployServerdPackage`): `create-lamaste@<version>` now installs exactly `<version>`, where it used to `npm pack @lamalibre/lamaste-serverd@latest`. The version step shows installed → this installer's version and the registry; the redeploy summary names the version it installed.
+- **The panel's Update action**: `lamaste-priv self-update` runs `npx --yes --@lamalibre:registry=<root's choice> @lamalibre/create-lamaste@<version> --yes`, and refuses a root npmrc routing `@lamalibre` to npmjs.
+- **Plugin installs, updates and update checks without a registry credential** — the panel's (`withRegistryUserconfig`), the agent CLI's and agent daemon's, the local plugin host's (`withInstallNpmrc`), core server `installPlugin` — route `@lamalibre` by the rule; npmjs in npm's configuration refuses before npm runs. With a credential nothing changes.
+- **Cloud SDK**: the provisioner and updater run `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@<version>` over SSH (`installerCommand`, plain versions only).
+- **Desktop**: the daemon installers, the local plugin host install (now `--ignore-scripts`), the `lamaste-agent` install, the desktop-app installers and the panel update check resolve the registry; the hardcoded development registry (`--registry http://127.0.0.1:4873`, which routed every package through it) is gone — npm's configuration is the development override.
+- Install instructions everywhere (README, docs, installer help and summary, repair messages, agent hints) carry `--@lamalibre:registry=https://feria.codelama.com.tr/`.
+
+### Removed
+
+- `.github/scripts/mirror-to-feria.mjs`, which copied releases from npmjs to Feria.
+
+### Upgrade notes
+
+- **npmjs is frozen** (2026-11-10): its last Lamaste release is 4.12.0; 4.13.0 and later are on the hosted Feria only. No final release goes to npmjs.
+- **A relay or agent on 4.13 or older** updates through code that asks npmjs. Map `@lamalibre` once in npm's global configuration — `sudo npm config set --location=global @lamalibre:registry https://feria.codelama.com.tr/` — then use the panel's **Update** (relay) or `sudo npm install -g @lamalibre/lamaste-agent@4.14.0 && lamaste-agent update` (agents). Or run the redeploy once as root with `--@lamalibre:registry=https://feria.codelama.com.tr/`; a DigitalOcean server the Desktop App provisioned can be redeployed by the 4.14 cloud CLI (`lamaste-cloud update`). See `05-operations/upgrades.md`, "Upgrading to 4.14".
+- A machine whose npm configuration names npmjs for `@lamalibre` now stops installs with an error saying to remove the line.
+
 ## [4.13.1] - 2026-11-11
 
 ### Fixed

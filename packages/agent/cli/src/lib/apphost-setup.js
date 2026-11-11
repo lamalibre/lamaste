@@ -29,6 +29,7 @@ import {
   APPHOST_PATHS,
   parseRelayKeysResponse,
   relayPublicKeySpki,
+  LAMALIBRE_REGISTRY_FLAG,
 } from '@lamalibre/lamaste';
 import {
   agentsRegistryPathIn,
@@ -158,7 +159,7 @@ export async function untrustedPaths(paths, fsOverrides = {}) {
 }
 
 /** How to get a lamaste-agent root can trust. */
-export const ROOT_OWNED_INSTALL = 'sudo npm install -g @lamalibre/lamaste-agent';
+export const ROOT_OWNED_INSTALL = `sudo npm install -g ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/lamaste-agent`;
 
 // ---------------------------------------------------------------------------
 // Relay keys

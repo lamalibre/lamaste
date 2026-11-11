@@ -503,3 +503,12 @@ export { peerSurface, peerRoute, createPeerAdminHandler } from './peer-surface.j
 export type { PeerSurfaceOptions, PeerRouteHandler, PeerRouteOptions } from './peer-surface.js';
 export { peerContextOf } from './peer-context.js';
 export type { PeerRequestContext } from './peer-context.js';
+
+// npm's @lamalibre:registry, read and resolved — see npm-registry-config.ts
+export {
+  readConfiguredLamalibreRegistry,
+  resolveLamalibreRegistry,
+  lamalibreRegistryNpmEnv,
+  lamalibreRegistryNpmArg,
+} from '../npm-registry-config.js';
+export type { LamalibreRegistryOptions } from '../npm-registry-config.js';

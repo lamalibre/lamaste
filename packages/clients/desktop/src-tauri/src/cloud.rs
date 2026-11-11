@@ -2050,10 +2050,15 @@ pub async fn check_panel_update(server_id: String) -> Result<PanelUpdateInfo, St
     .await
     .map_err(|e| format!("Task failed: {}", e))??;
 
-    // Get latest versions from npm registry
+    // Latest versions from the registry Lamaste is published to: the hosted
+    // Feria, or the one npm's configuration names for `@lamalibre` (a
+    // development Feria) — never npm's default registry (npmjs no longer
+    // carries Lamaste's packages).
     let (latest_panel_version, installer_version) = tokio::task::spawn_blocking(|| -> Result<(String, String), String> {
+        let registry = crate::branding::resolve_lamalibre_registry("npm")?;
+        let registry_arg = crate::branding::lamalibre_registry_arg(&registry);
         let panel_output = std::process::Command::new("npm")
-            .args(["view", "@lamalibre/lamaste-serverd", "version", "--json", "--prefer-online"])
+            .args(["view", "@lamalibre/lamaste-serverd", "version", "--json", "--prefer-online", registry_arg.as_str()])
             .output()
             .map_err(|e| format!("Failed to run npm: {}", e))?;
 
@@ -2065,7 +2070,7 @@ pub async fn check_panel_update(server_id: String) -> Result<PanelUpdateInfo, St
         };
 
         let installer_output = std::process::Command::new("npm")
-            .args(["view", "@lamalibre/create-lamaste", "version", "--json", "--prefer-online"])
+            .args(["view", "@lamalibre/create-lamaste", "version", "--json", "--prefer-online", registry_arg.as_str()])
             .output()
             .map_err(|e| format!("Failed to run npm: {}", e))?;
 

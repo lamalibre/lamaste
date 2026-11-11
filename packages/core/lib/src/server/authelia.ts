@@ -35,6 +35,7 @@ import yaml from 'js-yaml';
 import { canonicalJson } from '../app-job-signature.js';
 import { AUTHELIA_SESSION_COOKIE } from '../authelia-session.js';
 import { isOidcClientId } from '../constants.js';
+import { LAMALIBRE_REGISTRY_FLAG } from '../lamalibre-registry.js';
 import { assertDomainName, domainOfHost } from '../domains.js';
 import { externalGroup, memberGroup, oidcClientGroup, siteGroup } from '../owned-groups.js';
 import type { OidcClientDeclaration } from '../schemas.js';
@@ -1517,7 +1518,7 @@ export async function updateOidcProvider(
   if (!(await isOidcIssuerKeyProvisioned())) {
     throw new Error(
       `${AUTHELIA_OIDC_KEY} is missing — the OIDC issuer key is provisioned by create-lamaste; ` +
-        'run the installer again (npx @lamalibre/create-lamaste, redeploy) to create it',
+        `run the installer again (sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste, redeploy) to create it`,
     );
   }
 

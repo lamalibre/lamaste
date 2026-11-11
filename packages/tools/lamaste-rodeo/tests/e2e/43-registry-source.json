@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 43,
+    "name": "Lamaste's packages came from Feria, never npmjs (Single-VM)",
+    "suite": "e2e",
+    "description": "43 — Lamaste's packages came from Feria, never npmjs (Single-VM)",
+    "deps": [],
+    "requires": ["node", "npm", "find", "grep", "sort"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "the-rule-as-the-relay-s-core-resolves-it",
+      "label": "The rule, as the relay's core resolves it",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "Set PROBE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo bash -c \"$(lamalibre_registry_probe_script)\""
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "$(printf '%s' \"${PROBE}\" | tr '\\n' ';')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "$(printf '%s' \"${PROBE}\" | tr '\\n' ';')"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "root: the development Feria npm's configuration names ($(probe root))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(probe root)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": ":4873/"
+              },
+              "message": "root: the development Feria npm's configuration names ($(probe root))"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "the lamaste account: the same, from npm's global configuration ($(probe lamaste))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(probe lamaste)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": ":4873/"
+              },
+              "message": "the lamaste account: the same, from npm's global configuration ($(probe lamaste))"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "npm with no configuration: the hosted Feria",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(probe unconfigured)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "https://feria.codelama.com.tr/"
+              },
+              "message": "npm with no configuration: the hosted Feria"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "npm naming npmjs for @lamalibre: refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(probe npmjs)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused:lamalibre_registry_refused"
+              },
+              "message": "npm naming npmjs for @lamalibre: refused"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The rule, as the relay's core resolves it\"\n\nPROBE=$(sudo bash -c \"$(lamalibre_registry_probe_script)\")\nlog_info \"$(printf '%s' \"${PROBE}\" | tr '\\n' ';')\"\nprobe() { printf '%s\\n' \"${PROBE}\" | awk -v k=\"$1\" '$1 == k { print $2 }'; }\nassert_contains \"$(probe root)\" \":4873/\" \"root: the development Feria npm's configuration names ($(probe root))\" || true\nassert_contains \"$(probe lamaste)\" \":4873/\" \"the lamaste account: the same, from npm's global configuration ($(probe lamaste))\" || true\nassert_eq \"$(probe unconfigured)\" \"https://feria.codelama.com.tr/\" \"npm with no configuration: the hosted Feria\" || true\nassert_eq \"$(probe npmjs)\" \"refused:lamalibre_registry_refused\" \"npm naming npmjs for @lamalibre: refused\" || true"
+    },
+    {
+      "id": "the-evidence-npm-s-caches-and-logs",
+      "label": "The evidence: npm's caches and logs",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "Set EVIDENCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo bash -c \"$(npm_fetch_evidence_script)\""
+          },
+          "capture": [
+            {
+              "variable": "EVIDENCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Set PUBLIC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "public_registry_fetches \"${EVIDENCE}\""
+          },
+          "capture": [
+            {
+              "variable": "PUBLIC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Set DEV",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "dev_feria_fetches \"${EVIDENCE}\""
+          },
+          "capture": [
+            {
+              "variable": "DEV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(printf '%s' \"${DEV}\" | grep -c . || true) from the development Feria",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(printf '%s' \"${DEV}\" | grep -c . || true) from the development Feria"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(printf '%s' \"${DEV}\" | grep -c . || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "No @lamalibre request to npmjs, its mirrors or the hosted Feria",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "No @lamalibre request to npmjs, its mirrors or the hosted Feria"
+          }
+        }
+      ],
+      "bash": "log_section \"The evidence: npm's caches and logs\"\n\nEVIDENCE=$(sudo bash -c \"$(npm_fetch_evidence_script)\")\nPUBLIC=$(public_registry_fetches \"${EVIDENCE}\")\nDEV=$(dev_feria_fetches \"${EVIDENCE}\")\nlog_info \"$(printf '%s' \"${EVIDENCE}\" | grep -c . || true) @lamalibre URLs in npm's caches and logs, $(printf '%s' \"${DEV}\" | grep -c . || true) from the development Feria\"\nassert_not_eq \"$(printf '%s' \"${DEV}\" | grep -c . || true)\" \"0\" \"npm's caches hold @lamalibre requests to the development Feria (the evidence is there to read)\" || true\nif [ -n \"${PUBLIC}\" ]; then\n  log_fail \"@lamalibre was asked of a public registry or the hosted Feria: $(printf '%s' \"${PUBLIC}\" | head -5 | tr '\\n' ' ')\"\nelse\n  log_pass \"No @lamalibre request to npmjs, its mirrors or the hosted Feria\"\nfi"
+    },
+    {
+      "id": "the-root-helper-s-self-update-names-the-registry",
+      "label": "The root helper's self-update names the registry",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Set ARGV",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo node -e 'const p = require(\"/usr/local/sbin/lamaste-priv\"); process.stdout.write(p.selfUpdateArgs(\"9.9.9\", p.chooseLamalibreRegistry(\"undefined\"), \"u\").join(\" \"))' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "ARGV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "lamaste-priv self-update: npx --@lamalibre:registry=<registry> create-lamaste@<version>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ARGV"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "/usr/bin/npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@9.9.9 --yes"
+              },
+              "message": "lamaste-priv self-update: npx --@lamalibre:registry=<registry> create-lamaste@<version>"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo node -e 'const p = require(\"/usr/local/sbin/lamaste-priv\"); try { p.chooseLamalibreRegistry(\"https://registry.npmjs.org/\"); process.stdout.write(\"accepted\"); } catch { process.stdout.write(\"refused\"); }' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "…and refuses a root npmrc naming npmjs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REFUSED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…and refuses a root npmrc naming npmjs"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The root helper's self-update names the registry\"\n\nARGV=$(sudo node -e 'const p = require(\"/usr/local/sbin/lamaste-priv\"); process.stdout.write(p.selfUpdateArgs(\"9.9.9\", p.chooseLamalibreRegistry(\"undefined\"), \"u\").join(\" \"))' 2>/dev/null || echo \"\")\nassert_contains \"${ARGV}\" \"/usr/bin/npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@9.9.9 --yes\" \"lamaste-priv self-update: npx --@lamalibre:registry=<registry> create-lamaste@<version>\" || true\nREFUSED=$(sudo node -e 'const p = require(\"/usr/local/sbin/lamaste-priv\"); try { p.chooseLamalibreRegistry(\"https://registry.npmjs.org/\"); process.stdout.write(\"accepted\"); } catch { process.stdout.write(\"refused\"); }' 2>/dev/null || echo \"\")\nassert_eq \"${REFUSED}\" \"refused\" \"…and refuses a root npmrc naming npmjs\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 43 — Lamaste's packages came from Feria, never npmjs (Single-VM)\n# ============================================================================\n# Since 4.14 every path that installs or checks Lamaste's own @lamalibre\n# packages takes them from the hosted Feria, or from the registry npm's\n# configuration names for @lamalibre — never npm's default registry, npmjs\n# (packages/core/docs/05-operations/upgrades.md, \"Where Lamaste's packages\n# come from\"). The VM names the development Feria for @lamalibre in every\n# npmrc it has (tier node-ready). Run last; three-VM 68 is the same on three\n# machines.\n#\n# 1. The rule, as 4.14's core resolves it: root and the lamaste account\n#    follow the configuration (the development Feria); an npm with no\n#    configuration resolves the hosted Feria (nothing is fetched); an npm\n#    naming npmjs for @lamalibre is refused.\n# 2. The evidence: npm's cache index and debug logs, of every user, hold\n#    @lamalibre requests to the development Feria and none to a public\n#    registry or to the hosted Feria.\n# 3. The root helper runs the self-update's npx with --@lamalibre:registry=.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands node npm find grep sort\n\nbegin_test \"43 — Lamaste's packages came from Feria, never npmjs (Single-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

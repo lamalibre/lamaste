@@ -1,11 +1,11 @@
 # Installer Flags
 
-> CLI flags, environment variables, and exit codes for `npx @lamalibre/create-lamaste`.
+> CLI flags, environment variables, and exit codes for `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste`.
 
 ## Usage
 
 ```bash
-npx @lamalibre/create-lamaste [flags]
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste [flags]
 ```
 
 The installer runs as root on a fresh Ubuntu 24.04 server. It is completely non-interactive by default — all configuration happens later through the browser-based onboarding wizard.
@@ -26,7 +26,7 @@ The installer runs as root on a fresh Ubuntu 24.04 server. It is completely non-
 Prints a description of what the installer does, lists all flags, and exits with code 0. Does not modify anything on the system.
 
 ```bash
-npx @lamalibre/create-lamaste --help
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --help
 ```
 
 ### `--yes`, `-y`
@@ -34,7 +34,7 @@ npx @lamalibre/create-lamaste --help
 Skips the interactive confirmation prompt that appears before installation begins. Useful for automated deployments or scripts where you cannot press Enter.
 
 ```bash
-npx @lamalibre/create-lamaste --yes
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes
 ```
 
 Without this flag, the installer displays a banner listing all changes it will make and waits for the user to press Enter or Ctrl+C.
@@ -51,7 +51,7 @@ Skips all OS hardening tasks:
 Everything else (Node.js, nginx, mTLS, panel deployment) still runs.
 
 ```bash
-npx @lamalibre/create-lamaste --skip-harden
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --skip-harden
 ```
 
 Use this if you manage your own firewall rules, already have fail2ban configured, or are running on a platform that handles security at a different layer.
@@ -61,7 +61,7 @@ Use this if you manage your own firewall rules, already have fail2ban configured
 Allows the installer to run on a machine with a private or non-routable IP address (e.g., `192.168.x.x`, `10.x.x.x`). By default, the installer requires a public IP.
 
 ```bash
-npx @lamalibre/create-lamaste --dev
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --dev
 ```
 
 This is useful for:
@@ -76,7 +76,7 @@ When `--dev` is active, the installer prints the detected IP with a note: `(dev 
 Forces the installer to run the complete installation pipeline, ignoring skip guards that would normally detect an existing installation. This is useful when an installation is in an inconsistent state and you want to ensure all components are fully deployed.
 
 ```bash
-npx @lamalibre/create-lamaste --force-full
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --force-full
 ```
 
 Use this if:
@@ -90,7 +90,7 @@ Use this if:
 Prints a step-by-step guide for manually removing Lamaste from the server, then exits with code 0. Does not modify anything on the system.
 
 ```bash
-npx @lamalibre/create-lamaste --uninstall
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --uninstall
 ```
 
 The printed guide first points to the automated removal, `sudo lamaste-server uninstall`, then covers:
@@ -207,37 +207,37 @@ Components that are always redeployed on re-run:
 
 ```bash
 ssh root@203.0.113.42
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
 
 **Automated install (no confirmation prompt):**
 
 ```bash
-npx @lamalibre/create-lamaste --yes
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes
 ```
 
 **Install without OS hardening:**
 
 ```bash
-npx @lamalibre/create-lamaste --yes --skip-harden
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes --skip-harden
 ```
 
 **Test in a local VM:**
 
 ```bash
-npx @lamalibre/create-lamaste --dev
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --dev
 ```
 
 **Update an existing installation:**
 
 ```bash
-npx @lamalibre/create-lamaste@latest --yes
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste@latest --yes
 ```
 
 **View the uninstall guide:**
 
 ```bash
-npx @lamalibre/create-lamaste --uninstall
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --uninstall
 ```
 
 ## Quick Reference

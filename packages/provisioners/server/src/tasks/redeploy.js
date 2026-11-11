@@ -1,8 +1,7 @@
 import { execa } from 'execa';
-import { writeFile, readFile, mkdir, mkdtemp, cp, rm } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, cp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
@@ -25,6 +24,8 @@ import {
 } from '../lib/node-version.js';
 import { assertNginxSubModule } from '../lib/nginx-modules.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
+import { deployServerdPackage } from './panel.js';
+import { lamalibreNpmEnv, lamalibreRegistry } from '../lib/registry.js';
 import { autheliaReady } from '@lamalibre/lamaste/server';
 
 const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
@@ -54,13 +55,15 @@ async function getInstalledVersion(installDir) {
 }
 
 /**
- * Fetch the latest published version of @lamalibre/lamaste-serverd from npm.
+ * The version of the panel server this installer carries (vendor/serverd,
+ * bundled at pack time), or null if it cannot be read.
+ * @param {string} vendorDir
  * @returns {Promise<string | null>}
  */
-async function getLatestNpmVersion() {
+async function getVendorVersion(vendorDir) {
   try {
-    const { stdout } = await execa('npm', ['view', '@lamalibre/lamaste-serverd', 'version']);
-    return stdout.trim() || null;
+    const raw = await readFile(join(vendorDir, 'serverd', 'package.json'), 'utf8');
+    return JSON.parse(raw).version || null;
   } catch {
     return null;
   }
@@ -90,7 +93,7 @@ export function redeployTasks(ctx, task) {
   const installDir = ctx.installDir;
   const configDir = ctx.configDir;
 
-  // vendorDir still needed for lamaste-server-ui (pre-built static dist)
+  // This installer's own release: serverd, the CLI, server-ui, gatekeeper, docs
   const thisFile = fileURLToPath(import.meta.url);
   const vendorDir = join(dirname(thisFile), '..', '..', 'vendor');
 
@@ -99,15 +102,18 @@ export function redeployTasks(ctx, task) {
       title: 'Checking versions',
       task: async (_ctx, subtask) => {
         const installed = await getInstalledVersion(installDir);
-        const latest = await getLatestNpmVersion();
+        const target = await getVendorVersion(vendorDir);
+        // Refuses here, before anything changes, when root's npm
+        // configuration routes @lamalibre to npmjs.
+        const registry = await lamalibreRegistry();
         ctx.installedVersion = installed;
-        ctx.latestVersion = latest;
+        ctx.vendorVersion = target;
         // First, while the running panel is untouched: the panel this
         // redeploy starts writes every auth vhost with `sub_filter`, which
         // an nginx without the sub module refuses. Fatal — a relay whose
         // nginx lacks it keeps the version it runs (lib/nginx-modules.js).
         const nginxVersion = await assertNginxSubModule();
-        subtask.output = `Installed: ${installed || 'unknown'} → Latest: ${latest || 'unknown'}; ${nginxVersion}`;
+        subtask.output = `Installed: ${installed || 'unknown'} → ${target || 'unknown'}; @lamalibre from ${registry}; ${nginxVersion}`;
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -184,48 +190,12 @@ export function redeployTasks(ctx, task) {
     {
       title: 'Updating serverd',
       task: async (_ctx, subtask) => {
-        const serverDest = join(installDir, 'serverd');
-        // A fresh root-private directory: a predictable /tmp path could be
-        // prepared in advance by another local user.
-        const tmpDir = await mkdtemp(join(tmpdir(), 'lamaste-panel-update-'));
-
-        try {
-          // Download the package tarball to a temp directory via npm pack,
-          // then extract. We cannot `npm install` inside serverDest because
-          // its package.json has the same name — npm refuses to install a
-          // package as a dependency of itself.
-          await mkdir(serverDest, { recursive: true });
-
-          subtask.output = 'Downloading @lamalibre/lamaste-serverd from npm...';
-          const { stdout: tarball } = await execa('npm', [
-            'pack',
-            '@lamalibre/lamaste-serverd@latest',
-            '--prefer-online',
-            '--pack-destination',
-            tmpDir,
-          ]);
-          const tarballPath = join(tmpDir, tarball.trim());
-
-          subtask.output = 'Extracting package...';
-          await execa('tar', ['xzf', tarballPath, '-C', tmpDir]);
-
-          // npm pack extracts to a `package/` directory
-          const extracted = join(tmpDir, 'package');
-
-          subtask.output = 'Copying serverd files...';
-          await rm(join(serverDest, 'src'), { recursive: true, force: true });
-          await cp(join(extracted, 'src'), join(serverDest, 'src'), { recursive: true });
-          await cp(join(extracted, 'package.json'), join(serverDest, 'package.json'));
-
-          subtask.output = 'Installing production dependencies...';
-          await execa('npm', ['install', '--production', '--ignore-scripts'], {
-            cwd: serverDest,
-          });
-
-          subtask.output = `Panel server updated to ${ctx.latestVersion || 'latest'}`;
-        } finally {
-          await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-        }
+        // From this installer's own vendor/ — the release it was started
+        // for (`create-lamaste@<version>`), never whatever a registry
+        // calls latest.
+        subtask.output = 'Copying serverd files and installing production dependencies...';
+        const version = await deployServerdPackage(vendorDir, installDir);
+        subtask.output = `Panel server updated to ${version}`;
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -255,7 +225,10 @@ export function redeployTasks(ctx, task) {
         await cp(join(cliSrc, 'src'), join(cliDest, 'src'), { recursive: true, force: true });
 
         subtask.output = 'Installing lamaste-server CLI dependencies...';
-        await execa('npm', ['install', '--production', '--ignore-scripts'], { cwd: cliDest });
+        await execa('npm', ['install', '--production', '--ignore-scripts'], {
+          cwd: cliDest,
+          env: await lamalibreNpmEnv(),
+        });
 
         const serverBin = join(cliDest, 'bin', 'lamaste-server.js');
         await execa('chmod', ['+x', serverBin]);

@@ -23,6 +23,9 @@ uuid = { version = "1", features = ["v4"] }
 rand = "0.9"
 sha2 = "0.10"
 base64 = "0.22"
+# WHATWG URL parsing for the @lamalibre registry rule (branding.rs), the same
+# normalisation as the core library's `new URL()`; already in the dep graph.
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

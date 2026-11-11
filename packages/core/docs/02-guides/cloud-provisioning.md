@@ -14,7 +14,7 @@ Before you start, make sure you have:
 
 | Requirement               | Details                                                                                                                                                           |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Desktop app installed** | `npx @lamalibre/create-lamaste-desktop` ([setup guide](desktop-app-setup.md))                                                                                     |
+| **Desktop app installed** | `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop` ([setup guide](desktop-app-setup.md))                          |
 | **DigitalOcean account**  | A free account at [cloud.digitalocean.com](https://cloud.digitalocean.com). **If you have other infrastructure on DO, create a dedicated team first** (see below) |
 | **Payment method**        | A credit card or PayPal on file in DigitalOcean (required to create droplets)                                                                                     |
 | **Domain name**           | Optional for initial setup — you can add a domain later through the panel                                                                                         |
@@ -212,20 +212,20 @@ Click **Create Server** to begin provisioning.
 
 The wizard shows up to 12 steps with live progress indicators. Each step shows a spinning cyan icon while in progress, a green checkmark when complete, or a red X if something fails.
 
-| Step                            | What happens                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Validating token**            | Re-verifies the API token (defense in depth)                                                                |
-| **Generating SSH key**          | Creates a temporary ed25519 keypair (used only for this installation, then deleted)                         |
-| **Uploading SSH key**           | Uploads the public key to your DigitalOcean account                                                         |
-| **Creating droplet**            | Creates a droplet with the selected size, Ubuntu 24.04, and the `lamalibre:managed` + `product:lamaste` tag |
-| **Waiting for boot**            | Polls DigitalOcean until the droplet has a public IP and is ready (up to 5 minutes)                         |
-| **Setting up DNS records**      | Creates A and wildcard A records in DigitalOcean DNS (only if a domain was selected in the Domain step)     |
-| **Connecting via SSH**          | Establishes an SSH connection using the temporary key                                                       |
-| **Installing Lamaste**          | Runs `npx @lamalibre/create-lamaste` on the droplet (up to 10 minutes)                                      |
-| **Retrieving credentials**      | Downloads the admin certificate (`.p12` file) and reads the panel's TLS key pin from the droplet            |
-| **Enrolling admin certificate** | Imports the certificate into your OS credential store                                                       |
-| **Saving configuration**        | Writes the server entry to `~/.lamalibre/lamaste/servers.json`                                              |
-| **Cleaning up**                 | Deletes the temporary SSH key from DigitalOcean and your machine                                            |
+| Step                            | What happens                                                                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Validating token**            | Re-verifies the API token (defense in depth)                                                                                      |
+| **Generating SSH key**          | Creates a temporary ed25519 keypair (used only for this installation, then deleted)                                               |
+| **Uploading SSH key**           | Uploads the public key to your DigitalOcean account                                                                               |
+| **Creating droplet**            | Creates a droplet with the selected size, Ubuntu 24.04, and the `lamalibre:managed` + `product:lamaste` tag                       |
+| **Waiting for boot**            | Polls DigitalOcean until the droplet has a public IP and is ready (up to 5 minutes)                                               |
+| **Setting up DNS records**      | Creates A and wildcard A records in DigitalOcean DNS (only if a domain was selected in the Domain step)                           |
+| **Connecting via SSH**          | Establishes an SSH connection using the temporary key                                                                             |
+| **Installing Lamaste**          | Runs `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste` on the droplet (up to 10 minutes) |
+| **Retrieving credentials**      | Downloads the admin certificate (`.p12` file) and reads the panel's TLS key pin from the droplet                                  |
+| **Enrolling admin certificate** | Imports the certificate into your OS credential store                                                                             |
+| **Saving configuration**        | Writes the server entry to `~/.lamalibre/lamaste/servers.json`                                                                    |
+| **Cleaning up**                 | Deletes the temporary SSH key from DigitalOcean and your machine                                                                  |
 
 The entire process typically takes 3–5 minutes, depending on the region and network conditions.
 
@@ -315,7 +315,7 @@ If you already have a Lamaste server set up (via the manual SSH method), you can
 
 The app checks that the panel is reachable before adding it. The server is added with `active: false` — click **Set Active** on its card to start using it.
 
-> **Note:** Adding an existing server registers it in the app but does not configure authentication. You will still need to set up your agent certificate separately using `lamaste-agent setup` (after `npm install -g @lamalibre/lamaste-agent`) or by importing a certificate manually.
+> **Note:** Adding an existing server registers it in the app but does not configure authentication. You will still need to set up your agent certificate separately using `lamaste-agent setup` (after `npm install -g --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/lamaste-agent`) or by importing a certificate manually.
 
 ---
 

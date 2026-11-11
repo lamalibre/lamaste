@@ -327,9 +327,6 @@ fn stop_service(kind: &DaemonKind) -> Result<(), String> {
 // Install
 // ---------------------------------------------------------------------------
 
-/// Feria registry URL for `@lamalibre/*` packages during install.
-const FERIA_REGISTRY: &str = "http://127.0.0.1:4873";
-
 /// Install a daemon by spawning the appropriate installer.
 ///
 /// Agent and Server delegate to their npx `create-*` installers, which emit
@@ -349,10 +346,18 @@ fn install_daemon(
         return install_plugin_host(app_handle);
     }
 
+    // `@lamalibre` from the hosted Feria, or the registry npm's configuration
+    // names for it (a development Feria: `feria-server setup`) — never npm's
+    // default registry. Passed on the command line for npx and in the
+    // environment, so the installer's own npm calls resolve the same.
+    let registry = crate::branding::resolve_lamalibre_registry(&npm_binary())?;
+    let registry_arg = crate::branding::lamalibre_registry_arg(&registry);
+
     let (args, event_name): (Vec<&str>, String) = match kind {
         DaemonKind::Agent => (
             vec![
-                "--registry", FERIA_REGISTRY,
+                "--yes",
+                registry_arg.as_str(),
                 "@lamalibre/create-lamaste-agent",
                 "--headless",
                 "--json",
@@ -361,7 +366,8 @@ fn install_daemon(
         ),
         DaemonKind::Server => (
             vec![
-                "--registry", FERIA_REGISTRY,
+                "--yes",
+                registry_arg.as_str(),
                 "@lamalibre/create-lamaste",
                 "--json",
             ],
@@ -372,6 +378,7 @@ fn install_daemon(
 
     let mut child = Command::new("npx")
         .args(&args)
+        .env(crate::branding::LAMALIBRE_REGISTRY_ENV, &registry)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -515,16 +522,20 @@ fn install_plugin_host(app: &tauri::AppHandle) -> Result<(), String> {
         }),
     );
 
-    // 1. npm install -g (via Feria during dev, npmjs.org after ship)
+    // 1. npm install -g — `@lamalibre` from the hosted Feria, or the registry
+    //    npm's configuration names for it (a development Feria)
     emit_step_start(app, "npm-install");
+    let registry = crate::branding::resolve_lamalibre_registry(&npm_binary())?;
     run_capturing(
-        Command::new(npm_binary()).args([
-            "install",
-            "-g",
-            "--registry",
-            FERIA_REGISTRY,
-            PLUGIN_HOST_PACKAGE,
-        ]),
+        Command::new(npm_binary())
+            .args([
+                "install",
+                "-g",
+                "--ignore-scripts",
+                crate::branding::lamalibre_registry_arg(&registry).as_str(),
+                PLUGIN_HOST_PACKAGE,
+            ])
+            .env(crate::branding::LAMALIBRE_REGISTRY_ENV, &registry),
         "npm install",
     )?;
     emit_step_complete(app, "npm-install");

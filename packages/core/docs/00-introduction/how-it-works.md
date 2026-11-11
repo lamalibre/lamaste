@@ -55,14 +55,14 @@ SSH into a fresh Ubuntu droplet and run one command:
 
 ```bash
 apt install -y npm
-npx @lamalibre/create-lamaste
+npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste
 ```
 
 This installs everything the relay needs: nginx, Node.js, firewall rules, certificates, and the management panel. At the end, it prints a client certificate file and password. You download the certificate, import it into your browser, and disconnect SSH. You never SSH in again.
 
 **Option B: Desktop app (cloud provisioning)**
 
-Install the desktop app (`npx @lamalibre/create-lamaste-desktop`) and use the Servers tab to create a DigitalOcean droplet. The app handles everything — droplet creation, Lamaste installation, certificate download, and connection — without you ever touching SSH. Cloud API tokens are stored in your OS credential store (macOS Keychain or Linux libsecret), never in plaintext. See the [Cloud Provisioning guide](../02-guides/cloud-provisioning.md) for a step-by-step walkthrough.
+Install the desktop app (`npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste-desktop`) and use the Servers tab to create a DigitalOcean droplet. The app handles everything — droplet creation, Lamaste installation, certificate download, and connection — without you ever touching SSH. Cloud API tokens are stored in your OS credential store (macOS Keychain or Linux libsecret), never in plaintext. See the [Cloud Provisioning guide](../02-guides/cloud-provisioning.md) for a step-by-step walkthrough.
 
 **Phase 2: Onboarding (10 minutes, browser)**
 

@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { Listr } from 'listr2';
 import chalk from 'chalk';
 import { execa } from 'execa';
+import { LAMALIBRE_REGISTRY_FLAG, LAMALIBRE_REGISTRY_URL } from '@lamalibre/lamaste';
 import { detectOS, detectIP, checkRoot, installedPanelIp } from './lib/env.js';
 import { printSummary } from './lib/summary.js';
 import { readPanelKeyPin } from './lib/panel-pin.js';
@@ -71,7 +72,11 @@ ${b('DESCRIPTION')}
 
 ${b('USAGE')}
 
-  ${c('npx @lamalibre/create-lamaste')} ${d('[flags]')}
+  ${c(`sudo npx --yes ${LAMALIBRE_REGISTRY_FLAG} @lamalibre/create-lamaste`)} ${d('[flags]')}
+
+  Lamaste's packages are published to the hosted Feria
+  (${LAMALIBRE_REGISTRY_URL}); the option above routes only the
+  @lamalibre scope there.
 
 ${b('SYSTEM MODIFICATIONS')}
 
