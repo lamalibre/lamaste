@@ -209,6 +209,10 @@ assert_json_field "$(visit_body "$RESP")" '.code' 'invitation_not_pending' "…i
 log_section "No transport: not-configured, the link answered to the inviter"
 
 host_api_delete "settings/mail" > /dev/null 2>&1 || true
+# Clearing the transport rewrites Authelia's notifier and restarts it, and
+# Authelia's sessions live in memory: the inviter signs in again.
+md_wait_authelia "${DOMAIN_2}"
+md_sign_in "${COORD}" "${PASSWORD}" "$(reset_totp "${COORD}")" "${JAR_COORD}" "${FQDN}"
 RESP=$(inv_api "${JAR_COORD}" POST "" "$(jq -c -n --arg e "${LATER_MAIL}" '{email: $e, displayName: "E2E Later", role: "viewer"}')")
 assert_eq "$(visit_status "$RESP")" "201" "Another invitation: 201" || true
 INV_ID_2=$(json_get "$(visit_body "$RESP")" '.invitation.id // empty')

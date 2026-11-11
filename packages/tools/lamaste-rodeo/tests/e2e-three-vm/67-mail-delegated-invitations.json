@@ -941,7 +941,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-71",
+          "id": "step-73",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -958,7 +958,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-74",
           "label": "Another invitation: 201",
           "target": "local",
           "continueOnError": true,
@@ -979,7 +979,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-75",
           "label": "Set INV_ID_2",
           "target": "local",
           "op": {
@@ -996,7 +996,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-76",
           "label": "…mail not-configured, its link answered",
           "target": "local",
           "continueOnError": true,
@@ -1018,7 +1018,7 @@
           }
         }
       ],
-      "bash": "log_section \"No transport: not-configured, the link answered to the inviter\"\n\nhost_api_delete \"settings/mail\" > /dev/null 2>&1 || true\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"E2E Later\", role: \"viewer\"}')\")\nassert_eq \"$(visit_status \"$RESP\")\" \"201\" \"Another invitation: 201\" || true\nINV_ID_2=$(json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty')\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'not-configured true' \"…mail not-configured, its link answered\" || true\n[ -n \"${INV_ID_2}\" ] && inv_api \"${JAR_COORD}\" DELETE \"/${INV_ID_2}\" > /dev/null || true"
+      "bash": "log_section \"No transport: not-configured, the link answered to the inviter\"\n\nhost_api_delete \"settings/mail\" > /dev/null 2>&1 || true\n# Clearing the transport rewrites Authelia's notifier and restarts it, and\n# Authelia's sessions live in memory: the inviter signs in again.\nmd_wait_authelia \"${DOMAIN_2}\"\nmd_sign_in \"${COORD}\" \"${PASSWORD}\" \"$(reset_totp \"${COORD}\")\" \"${JAR_COORD}\" \"${FQDN}\"\nRESP=$(inv_api \"${JAR_COORD}\" POST \"\" \"$(jq -c -n --arg e \"${LATER_MAIL}\" '{email: $e, displayName: \"E2E Later\", role: \"viewer\"}')\")\nassert_eq \"$(visit_status \"$RESP\")\" \"201\" \"Another invitation: 201\" || true\nINV_ID_2=$(json_get \"$(visit_body \"$RESP\")\" '.invitation.id // empty')\nassert_json_field \"$(visit_body \"$RESP\")\" '\"\\(.mail.status) \\(.inviteUrl | test(\"/invite#\"))\"' 'not-configured true' \"…mail not-configured, its link answered\" || true\n[ -n \"${INV_ID_2}\" ] && inv_api \"${JAR_COORD}\" DELETE \"/${INV_ID_2}\" > /dev/null || true"
     }
   ],
   "apiHelpers": [],
