@@ -91,6 +91,14 @@ const denials = [];
 const floors = new Map();
 let gatewayOptions;
 
+/** Wait until the first bytes of an answer can be read, without reading them. */
+function prefixArrived(response) {
+  return new Promise((resolve) => {
+    if (response.body.readableLength > 0) resolve();
+    else response.body.once('readable', resolve);
+  });
+}
+
 function releaseSlow() {
   for (const resolve of state.slowWaiters.splice(0)) resolve();
 }
@@ -510,8 +518,9 @@ test('a call aborted after its headers: the helpers reject, never a truncated bo
     });
     assert.equal(response.status, 200);
     await waitFor(() => state.partialWritten > written);
-    // The prefix is on its way; abort before the provider ends the body.
-    setTimeout(() => abort.abort(), 100);
+    // The prefix has arrived; abort before the provider ends the body.
+    await prefixArrived(response);
+    abort.abort();
     await assert.rejects(response[read](), { name: 'PeerCallError', code: 'aborted' });
   }
   // Read by hand, `finished()` says so too.
@@ -519,11 +528,14 @@ test('a call aborted after its headers: the helpers reject, never a truncated bo
   const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold', {
     signal: abort.signal,
   });
-  setTimeout(() => abort.abort(), 100);
+  const done = response.finished();
   const chunks = [];
-  for await (const chunk of response.body) chunks.push(chunk);
+  for await (const chunk of response.body) {
+    chunks.push(chunk);
+    abort.abort();
+  }
   assert.equal(Buffer.concat(chunks).toString('utf-8'), '{"partial":true}');
-  await assert.rejects(response.finished(), { code: 'aborted' });
+  await assert.rejects(done, { code: 'aborted' });
 });
 
 test('a call aborted before its headers rejects with aborted', async () => {
@@ -542,10 +554,23 @@ test('a provider that fails mid-body: the answer is truncated, not a shorter bod
   await assert.rejects(consumer.peers.json('directory:read', 'GET', '/partial/die'), {
     code: 'truncated',
   });
-  // A body the provider ends: finished() resolves.
+  // A body the provider ends: finished() resolves, asked before or after the read.
   const whole = await consumer.peers.call('directory:read', 'GET', '/stream');
+  const done = whole.finished();
   assert.equal(await whole.text(), 'data: one\n\ndata: two\n\n');
+  await done;
   await whole.finished();
+});
+
+test('an answer the relay ends mid-body (the call no longer allowed) is truncated', async () => {
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold');
+  await prefixArrived(response);
+  state.recheckAllowed = false;
+  try {
+    await assert.rejects(response.json(), { name: 'PeerCallError', code: 'truncated' });
+  } finally {
+    state.recheckAllowed = true;
+  }
 });
 
 test('a replaced channel lets the call in flight finish; new calls take the new one', async () => {
@@ -668,6 +693,10 @@ test('HEAD reaches a GET endpoint, signed', async () => {
   const response = await consumer.peers.call('directory:read', 'HEAD', '/units/5');
   assert.equal(response.status, 200);
   response.body.resume();
+  await response.finished();
+  // No body, never read: finished() resolves all the same.
+  const unread = await consumer.peers.call('directory:read', 'HEAD', '/units/6');
+  await unread.finished();
 });
 
 test("Lamaste's readiness call: protocol 1 and the outbox position", async () => {
@@ -991,14 +1020,25 @@ test('a channel that dies without a FIN fails its calls at once and is replaced'
     await waitFor(() => second.peers.connected());
     assert.equal((await second.peers.json('directory:read', 'GET', '/units/1')).unit, '1');
 
+    // An answer under way when the connection stops: the dropped channel
+    // fails it, never ends it as a shorter body.
+    const partial = await second.peers.call('directory:read', 'GET', '/partial/hold');
+    await prefixArrived(partial);
+
     // The connection stops carrying anything; neither side sees it close.
     proxy.stallOpen();
     const started = Date.now();
-    await assert.rejects(
-      () => second.peers.json('directory:read', 'GET', '/units/2'),
-      (err) => err instanceof PeerCallError && err.code === 'relay_unavailable',
+    await Promise.all([
+      assert.rejects(partial.json(), { name: 'PeerCallError', code: 'truncated' }),
+      assert.rejects(
+        () => second.peers.json('directory:read', 'GET', '/units/2'),
+        (err) => err instanceof PeerCallError && err.code === 'relay_unavailable',
+      ),
+    ]);
+    assert.ok(
+      Date.now() - started < 3_000,
+      'the answer and the call failed within the PING timeout',
     );
-    assert.ok(Date.now() - started < 3_000, 'the call failed within the PING timeout');
 
     // The relay attaches anew (a fresh connection carries bytes again): the
     // dead session is dropped on this side too, and calls work again.

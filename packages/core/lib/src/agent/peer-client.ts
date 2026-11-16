@@ -38,6 +38,7 @@ import http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex, Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
 import { RESPONDER_HEADER, isOriginFormPath } from '../caller-assertion.js';
 import type { PeerCallerIdentity } from '../caller-assertion.js';
@@ -148,12 +149,14 @@ export interface PeerResponse {
    * The body as it streams. Read it, or call one of the helpers once. The
    * helpers reject (`aborted`, `truncated`) when the stream is reset before
    * the provider ends it; reading `body` yourself, a reset ends it without
-   * an error — await `finished()` after its end before trusting what you read.
+   * an error — await `finished()` (while or after reading it) before
+   * trusting what you read.
    */
   readonly body: Readable;
   /**
-   * Resolves once the stream has closed after the provider ended the body;
-   * rejects (`aborted`, `truncated`) when it was reset instead.
+   * Resolves once `body` has been read to its end and the provider ended it;
+   * rejects (`aborted`, `truncated`) when it was reset instead. Pending while
+   * the body is unread.
    */
   finished(): Promise<void>;
   buffer(maxBytes?: number): Promise<Buffer>;
@@ -293,6 +296,17 @@ interface CursorRow {
 const RELAY_ANSWER_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Drop a peer channel so that every answer still streaming on it fails:
+ * a session destroyed without an error resets its streams with `NO_ERROR`,
+ * which the other side reads as the clean end of each body. With an error
+ * they are reset with `INTERNAL_ERROR`. The session's own `'error'`
+ * listener takes the error.
+ */
+function dropSession(s: ClientHttp2Session): void {
+  if (!s.destroyed) s.destroy(new Error('The peer channel was dropped'));
+}
+
 function headerValue(headers: PeerRequestLike['headers'], name: string): string | undefined {
   const value = headers[name];
   return Array.isArray(value) ? value[0] : value;
@@ -334,10 +348,26 @@ async function readAll(
   return Buffer.concat(chunks, size);
 }
 
-/** Resolves once the stream has closed after the provider ended it; rejects for a reset or an abort. */
-async function endedCleanly(stream: ClientHttp2Stream, signal?: AbortSignal): Promise<void> {
+/**
+ * Resolves once the body has been read to its end and the stream has
+ * closed with the provider's clean end; rejects for a reset or an abort.
+ * Waits while the body is still being read.
+ */
+async function endedCleanly(
+  stream: ClientHttp2Stream,
+  signal?: AbortSignal,
+  bodyless = false,
+): Promise<void> {
+  try {
+    await finished(stream, { writable: false });
+  } catch {
+    // A reset or an error: judged below, from how the stream closed.
+  }
   if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', resolve));
-  if (stream.readableEnded && stream.rstCode === http2.constants.NGHTTP2_NO_ERROR) return;
+  const clean = stream.rstCode === http2.constants.NGHTTP2_NO_ERROR;
+  // An answer that has no body (HEAD, 204, 304) closes cleanly without its
+  // readable side ever ending when nobody read it.
+  if (clean && (stream.readableEnded || (bodyless && !signal?.aborted))) return;
   if (signal?.aborted) throw new PeerCallError('aborted', 'The call was aborted');
   throw new PeerCallError(
     'truncated',
@@ -397,19 +427,19 @@ export function createPeers(opts: PeersOptions): Peers {
     probing.add(s);
     const deadline = setTimeout(() => {
       logger?.warn({ plugin: opts.plugin }, 'Peer channel did not answer a PING: dropped');
-      s.destroy();
+      dropSession(s);
     }, pingTimeoutMs);
     deadline.unref();
     const sent = s.ping((err) => {
       probing.delete(s);
       clearTimeout(deadline);
-      if (err) s.destroy();
+      if (err) dropSession(s);
       else aliveAt.set(s, Date.now());
     });
     if (!sent) {
       probing.delete(s);
       clearTimeout(deadline);
-      s.destroy();
+      dropSession(s);
     }
   }
 
@@ -587,10 +617,13 @@ export function createPeers(opts: PeersOptions): Peers {
     if (callOpts.signal) {
       const signal = callOpts.signal;
       if (signal.aborted) stream.close(http2.constants.NGHTTP2_CANCEL);
-      else
-        signal.addEventListener('abort', () => stream.close(http2.constants.NGHTTP2_CANCEL), {
-          once: true,
-        });
+      else {
+        // Removed when the stream closes: a long-lived signal must not keep
+        // every stream it was given.
+        const onAbort = (): void => stream.close(http2.constants.NGHTTP2_CANCEL);
+        signal.addEventListener('abort', onAbort, { once: true });
+        stream.once('close', () => signal.removeEventListener('abort', onAbort));
+      }
     }
     if (body !== undefined) {
       if (typeof body === 'string' || body instanceof Uint8Array) stream.end(body);
@@ -658,7 +691,8 @@ export function createPeers(opts: PeersOptions): Peers {
       status,
       headers: out,
       body: stream,
-      finished: () => endedCleanly(stream, callOpts.signal),
+      finished: () =>
+        endedCleanly(stream, callOpts.signal, upper === 'HEAD' || status === 204 || status === 304),
       buffer: (maxBytes = DEFAULT_MAX_BYTES) => readAll(once(), maxBytes, callOpts.signal),
       text: async (maxBytes = DEFAULT_MAX_BYTES) =>
         (await readAll(once(), maxBytes, callOpts.signal)).toString('utf-8'),
@@ -1076,7 +1110,7 @@ export function createPeers(opts: PeersOptions): Peers {
         await new Promise<void>((resolve) => {
           s.close(() => resolve());
           setTimeout(() => {
-            s.destroy();
+            dropSession(s);
             resolve();
           }, 1_000).unref();
         });

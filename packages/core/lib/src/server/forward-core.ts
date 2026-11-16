@@ -574,10 +574,27 @@ function openUpstream(params: {
   });
 }
 
+/**
+ * End an answer that cannot be completed so that the client sees it fail.
+ * On HTTP/2 a stream reset with `NO_ERROR` — what `destroy()` without an
+ * error sends — ends the client's readable side as a clean end, so a
+ * partial body would pass for the whole one: destroyed with an error, the
+ * stream is reset with `INTERNAL_ERROR` (the compatibility layer takes the
+ * stream's error), and the response still reads as unfinished to the
+ * forwarding core, which cancels the provider's request. Closing the stream
+ * itself would mark the response finished. On HTTP/1 the connection is
+ * closed under the body (a client sees the length or the chunking cut
+ * short).
+ */
+export function resetAnswer(res: ForwardResponse): void {
+  if ('stream' in res) res.destroy(new Error('The answer was ended by the relay'));
+  else res.destroy();
+}
+
 /** Write a JSON answer on a hijacked reply. */
 export function writeJson(res: ForwardResponse, status: number, body: unknown): void {
   if (res.headersSent) {
-    res.destroy();
+    resetAnswer(res);
     return;
   }
   const json = Buffer.from(JSON.stringify(body), 'utf-8');
@@ -729,8 +746,10 @@ export function streamResponse(
       if (eventStream) return;
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        // The answer first: the pipeline reacts to the upstream's error
+        // later, and the client must see the reset, not an end.
+        resetAnswer(res);
         upstreamRes.destroy(new Error('idle'));
-        res.destroy();
         finish({ status, error: 'response body idle timeout' });
       }, bodyIdleTimeoutMs);
     };
@@ -739,7 +758,7 @@ export function streamResponse(
     pipeline(upstreamRes, res)
       .then(() => finish({ status }))
       .catch((err: Error) => {
-        res.destroy();
+        resetAnswer(res);
         finish({ status, error: err.message });
       });
   });

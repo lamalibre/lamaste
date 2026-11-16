@@ -121,6 +121,7 @@ import {
   buildRequestHookPlan,
   forwardRequest,
   markPeerRelayAnswer,
+  resetAnswer,
   writeJson,
 } from './forward-core.js';
 import type {
@@ -394,8 +395,9 @@ export function createPeerGateway(
     // Reset, whether or not the provider answered yet: the forwarding core
     // sees the stream close unfinished and cancels the provider's request
     // too — an answer written here instead would leave the provider working
-    // on a call no longer allowed.
-    res.destroy();
+    // on a call no longer allowed. A reset with an error code: a client
+    // must not take what it received for the whole answer.
+    resetAnswer(res);
   }
 
   function sweep(): void {
@@ -1002,7 +1004,7 @@ export function createPeerGateway(
         'The peer gateway failed on a stream',
       );
       if (!res.headersSent) refuse(res, 500, 'relay_error', 'The relay failed on this call');
-      else res.destroy();
+      else resetAnswer(res);
     }
   };
 }

@@ -65,6 +65,17 @@ import {
 } from '../peers.js';
 import type { AgentForwarderLogger } from './forward-core.js';
 
+/**
+ * Drop a peer channel so that every answer still streaming on it fails:
+ * a session destroyed without an error resets its streams with `NO_ERROR`,
+ * which the other side reads as the clean end of each body. With an error
+ * they are reset with `INTERNAL_ERROR`. The session's own `'error'`
+ * listener takes the error.
+ */
+function dropSession(s: ServerHttp2Session): void {
+  if (!s.destroyed) s.destroy(new Error('The peer channel was dropped'));
+}
+
 /** How much memory (MB) one channel's HTTP/2 session may hold before it refuses new streams. */
 export const PEER_CHANNEL_MAX_SESSION_MEMORY_MB = 32;
 
@@ -265,11 +276,11 @@ export function createPeerChannelServer(opts: {
       // PEER_CHANNEL_PING_TIMEOUT_MS ends the channel.
       const pinger = setInterval(() => {
         if (s.closed || s.destroyed) return;
-        const deadline = setTimeout(() => s.destroy(), PEER_CHANNEL_PING_TIMEOUT_MS);
+        const deadline = setTimeout(() => dropSession(s), PEER_CHANNEL_PING_TIMEOUT_MS);
         deadline.unref();
         const sent = s.ping((err) => {
           clearTimeout(deadline);
-          if (err) s.destroy();
+          if (err) dropSession(s);
         });
         if (!sent) {
           clearTimeout(deadline);
@@ -285,7 +296,7 @@ export function createPeerChannelServer(opts: {
           if (!s.closed && !s.destroyed) s.close();
         },
         destroy() {
-          if (!s.destroyed) s.destroy();
+          dropSession(s);
         },
       };
     },
