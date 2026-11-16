@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
+import { ensureRequestPrivacyConf } from '../lib/request-privacy.js';
 import {
   ensureHttpRedirect,
   ensureHttpsDefault,
@@ -133,6 +134,21 @@ export function redeployTasks(ctx, task) {
         subtask.output = changed
           ? 'nginx map installed: backends never receive the authelia_session cookie'
           : 'nginx map already in place';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Keeping queries out of the access log and Authelia',
+      task: async (_ctx, subtask) => {
+        // Also while the running panel is untouched: the installer's own
+        // sites refreshed below and every vhost the panel this redeploy
+        // starts re-renders log with `access_log … lamaste_noquery;`, and
+        // the locations that ask Authelia name `$lamaste_request_path` —
+        // nginx refuses both without this file. Fatal, as the map above.
+        const { changed } = await ensureRequestPrivacyConf();
+        subtask.output = changed
+          ? 'nginx logs the path of a request, never its query or referrer'
+          : 'nginx log format already in place';
       },
       rendererOptions: { persistentOutput: true },
     },

@@ -16,9 +16,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { ACCESS_LOG_DIRECTIVE } from '@lamalibre/lamaste';
 import {
   renderAgentPanelVhost,
   renderAuthVhost,
+  renderChiselTunnelVhost,
   renderPanelVhost,
   renderStaticSiteVhost,
   renderTunnelVhost,
@@ -262,6 +264,58 @@ test('outdated tunnel vhosts are rewritten on the certificate they name', async 
   ]);
 });
 
+test('every tunnel vhost from before is rewritten to log the path, never the query', async () => {
+  // As 4.14 wrote them: current in every way but the server-level access log
+  // (nginx's http-level `combined` log, query and referrer included, applied).
+  const before = {
+    'lamalibre-lamaste-agent-panel-agent-r730.example.com': renderAgentPanelVhost(
+      'agent-r730.example.com',
+      'example.com',
+      9393,
+      WILDCARD,
+    ).config,
+    'lamalibre-lamaste-app-herd.example.com': renderTunnelVhost(
+      'restricted',
+      'herd.example.com',
+      'example.com',
+      9400,
+      WILDCARD,
+      { pathPrefix: 'herd', maxBodySizeMb: 50 },
+    ).config,
+    'lamalibre-lamaste-app-app.example.com': renderTunnelVhost(
+      'restricted',
+      'app.example.com',
+      'example.com',
+      9402,
+      WILDCARD,
+    ).config,
+    'lamalibre-lamaste-app-open.example.com': renderTunnelVhost(
+      'public',
+      'open.example.com',
+      'example.com',
+      9403,
+      WILDCARD,
+      { maxBodySizeMb: 10 },
+    ).config,
+  };
+  const installed = Object.fromEntries(
+    Object.entries(before).map(([name, config]) => [name, withoutAccessLog(config)]),
+  );
+  const { deps, writes } = fakeDeps(installed, { tunnels: [panel, plugin, app, open] });
+  const result = await reconcileTunnelVhosts(log, deps);
+  assert.deepEqual(result.rewritten, [
+    'agent-r730.example.com',
+    'herd.example.com',
+    'app.example.com',
+    'open.example.com',
+  ]);
+  assert.deepEqual(result.skipped, []);
+  for (const write of writes) {
+    assert.equal(write.config, before[write.name], write.name);
+    assert.equal(write.config.split(ACCESS_LOG_DIRECTIVE).length - 1, 1, write.name);
+  }
+});
+
 test('a rewrite never adds or removes authentication on a tunnel', async () => {
   // State says restricted, the installed vhost is public — and the reverse.
   const restrictedApp = { ...app, accessMode: 'restricted' };
@@ -365,12 +419,27 @@ function panelVhostBefore45(certDir) {
   return out;
 }
 
+/**
+ * A vhost as written before it kept queries out of the access log: no
+ * server-level `access_log` (nginx's http-level `combined` log applied).
+ */
+function withoutAccessLog(config) {
+  const out = config.replaceAll(`\n    ${ACCESS_LOG_DIRECTIVE}`, '');
+  assert.notEqual(out, config, 'the fixture differs from the current vhost');
+  return out;
+}
+
 test('the panel, the auth portal and static sites are rewritten', async () => {
   const docsCert = '/etc/letsencrypt/live/docs.example.com';
   const panelCert = '/etc/letsencrypt/live/panel.example.com';
+  const tunnelCert = '/etc/letsencrypt/live/tunnel.example.com';
   const { deps, writes } = fakeDeps(
     {
       'lamalibre-lamaste-panel-domain': panelVhostBefore45(panelCert),
+      // Chisel's, written at onboarding only: an upgrade rewrites it here.
+      'lamalibre-lamaste-tunnel': withoutAccessLog(
+        renderChiselTunnelVhost('example.com', tunnelCert).config,
+      ),
       'lamalibre-lamaste-auth-example.com': namingClientHost(
         renderAuthVhost('example.com', WILDCARD).config,
         'auth.example.com',
@@ -387,18 +456,34 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
     },
     {
       sites: [protectedSite, plainSite, pendingSite, goneSite],
-      linked: ['lamalibre-lamaste-panel-domain', `lamalibre-lamaste-site-${protectedSite.id}`],
+      linked: [
+        'lamalibre-lamaste-panel-domain',
+        'lamalibre-lamaste-tunnel',
+        `lamalibre-lamaste-site-${protectedSite.id}`,
+      ],
     },
   );
 
   const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], deps);
-  assert.deepEqual(result.rewritten, ['panel.example.com', 'auth.example.com', 'docs.example.com']);
+  assert.deepEqual(result.rewritten, [
+    'panel.example.com',
+    'tunnel.example.com',
+    'auth.example.com',
+    'docs.example.com',
+  ]);
   assert.equal(result.unchanged, 1);
   // A site still waiting for its certificate has no vhost to report.
   assert.deepEqual(result.skipped, [{ vhost: 'gone.example.com', reason: 'no vhost installed' }]);
   assert.deepEqual(result.failed, []);
 
-  const [panelWrite, authWrite, siteWrite] = writes;
+  const [panelWrite, tunnelWrite, authWrite, siteWrite] = writes;
+  // Every rewritten vhost logs the path, never the query.
+  for (const write of writes) {
+    assert.equal(write.config.split(ACCESS_LOG_DIRECTIVE).length - 1, 1, write.name);
+  }
+  assert.equal(tunnelWrite.name, 'lamalibre-lamaste-tunnel');
+  assert.equal(tunnelWrite.enabled, true);
+  assert.equal(tunnelWrite.config, renderChiselTunnelVhost('example.com', tunnelCert).config);
   // The panel's own vhost: on its certificate, linked as it was, clearing a
   // client's relay assertion in every location.
   assert.equal(panelWrite.name, 'lamalibre-lamaste-panel-domain');
@@ -413,6 +498,11 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
   assert.equal(authWrite.enabled, false, 'the link state is kept');
   assert.equal(authWrite.config, renderAuthVhost('example.com', WILDCARD).config);
   assert.match(authWrite.config, /ssl_certificate \/etc\/letsencrypt\/live\/example\.com\//);
+  // Authelia is told the path alone; Gatekeeper's checks keep the raw target.
+  assert.match(
+    authWrite.config,
+    /X-Original-URL https:\/\/auth\.example\.com\$lamaste_request_path;/,
+  );
   assert.match(authWrite.config, /X-Original-URL https:\/\/auth\.example\.com\$request_uri;/);
 
   assert.equal(siteWrite.name, `lamalibre-lamaste-site-${protectedSite.id}`);
@@ -421,7 +511,13 @@ test('the panel, the auth portal and static sites are rewritten', async () => {
     siteWrite.config,
     renderStaticSiteVhost(protectedSite, docsCert, 'example.com').config,
   );
+  assert.match(
+    siteWrite.config,
+    /X-Original-URL https:\/\/docs\.example\.com\$lamaste_request_path;/,
+  );
+  // A request without a session: Gatekeeper's redirect, back to the whole URL.
   assert.match(siteWrite.config, /X-Original-URL https:\/\/docs\.example\.com\$request_uri;/);
+  assert.match(siteWrite.config, /error_page 401 = \/internal\/lamaste\/sign-in;/);
   assert.doesNotMatch(siteWrite.config, /\$http_host/);
 });
 
@@ -479,6 +575,7 @@ test('a site whose installed vhost disagrees with its protection is left alone',
   const { deps, writes } = fakeDeps(
     {
       'lamalibre-lamaste-panel-domain': renderPanelVhost('example.com').config,
+      'lamalibre-lamaste-tunnel': renderChiselTunnelVhost('example.com').config,
       'lamalibre-lamaste-auth-example.com': renderAuthVhost('example.com').config,
       [`lamalibre-lamaste-site-${protectedSite.id}`]: renderStaticSiteVhost(
         { ...protectedSite, autheliaProtected: false },
@@ -490,7 +587,7 @@ test('a site whose installed vhost disagrees with its protection is left alone',
   );
   const result = await reconcileSiteVhosts(log, [{ name: 'example.com', primary: true }], deps);
   assert.deepEqual(writes, []);
-  assert.equal(result.unchanged, 2);
+  assert.equal(result.unchanged, 3);
   assert.equal(result.skipped.length, 1);
   assert.match(result.skipped[0].reason, /disagree on whether it authenticates/);
 });

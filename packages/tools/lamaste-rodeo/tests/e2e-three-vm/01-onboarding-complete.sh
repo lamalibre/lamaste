@@ -237,7 +237,7 @@ assert_eq "$UNIT_OWNER" "root" "chisel and Authelia units are root-owned" || tru
 EVIL_VHOST="$(vhost_name app "e2e-evil.${TEST_DOMAIN}")"
 EVIL_VHOST_OUT=$(host_exec "printf 'server {\n listen 443 ssl;\n access_log /etc/cron.d/e2e;\n}\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write ${EVIL_VHOST} 2>&1 >/dev/null; echo \"exit \$?\"")
 assert_contains "$EVIL_VHOST_OUT" "exit 2" "lamaste-priv refuses a vhost with access_log (exit 2)" || true
-assert_contains "$EVIL_VHOST_OUT" 'directive "access_log" is not allowed' "…for that directive, not for its name" || true
+assert_contains "$EVIL_VHOST_OUT" 'arguments of "access_log" are not allowed' "…for that file: only the relay's own log in its own format" || true
 EVIL_VHOST_FILE=$(host_exec "test -e /etc/nginx/sites-available/${EVIL_VHOST} && echo yes || echo no")
 assert_eq "$EVIL_VHOST_FILE" "no" "The refused vhost was not written" || true
 OLD_MV_RULE=$(host_exec "sudo -u lamaste sudo -n /usr/bin/mv /tmp/site-index-x -t /etc/sudoers.d /var/www/lamaste/y >/dev/null 2>&1 && echo allowed || echo denied")

@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  ACCESS_LOG_DIRECTIVE,
   AUTHELIA_FORCED_NAMESPACES,
   AUTH_BRANDING_FILES,
   AUTH_BRANDING_LOCALES_DIR,
@@ -10,6 +11,7 @@ import {
   DELEGATED_INVITATIONS_API_PREFIX,
   DELEGATED_INVITATIONS_PAGE_PREFIX,
   RELAY_PANEL_PORT,
+  REQUEST_PATH_VARIABLE,
   SITE_UPLOAD_MAX_REQUEST_MIB,
   USER_SURFACE_MAX_RESPONSE_SECONDS,
   isUserSurfaceRoute,
@@ -149,6 +151,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -432,6 +435,72 @@ function assertLiteralHostname(name) {
 function originalUrl(fqdn) {
   assertLiteralHostname(fqdn);
   return `https://${fqdn}$request_uri`;
+}
+
+/**
+ * The URL a location asking Authelia directly (`/api/authz/auth-request`)
+ * sends as `X-Original-URL`: as {@link originalUrl}, without the query.
+ * Authelia logs that URL whenever it refuses a signed-in user, and the
+ * relay's access-control rules decide by host and subject alone — the query
+ * is the application's, never Authelia's (core `request-privacy.ts`; the
+ * variable comes from the http-level file create-lamaste installs). Never
+ * `$uri`: decoded, it may not even parse as a URL.
+ *
+ * Gatekeeper's subrequests keep {@link originalUrl}: Gatekeeper matches the
+ * raw target itself and cuts the query before it asks Authelia.
+ *
+ * @param {string} fqdn
+ */
+function autheliaOriginalUrl(fqdn) {
+  assertLiteralHostname(fqdn);
+  return `https://${fqdn}${REQUEST_PATH_VARIABLE}`;
+}
+
+/** Where a location asking Authelia directly sends a request without a session. */
+const SIGN_IN_LOCATION = '/internal/lamaste/sign-in';
+
+/**
+ * `error_page 401` of a location asking Authelia directly: the
+ * {@link signInLocation}. Authelia's own answer (its `Location`) is built
+ * from the URL it was asked about, which no longer carries the query
+ * ({@link autheliaOriginalUrl}): taken as the redirect, it would send the
+ * user back without it — the desktop's sign-in (`/api/user-access/authorize
+ * ?challenge=…&nonce=…`) needs it.
+ */
+const SIGN_IN_ON_401 = `error_page 401 = ${SIGN_IN_LOCATION};`;
+
+/**
+ * The location a request without a session is sent to by
+ * {@link SIGN_IN_ON_401}: Gatekeeper answers it with the redirect to the
+ * sign-in of the host's domain, `rd` the full URL — query included, encoded
+ * as one parameter — built from nginx's `$request_uri` (an internal
+ * redirect keeps it) on the vhost's own hostname. Gatekeeper is sent no
+ * cookie and decides nothing; it never asks Authelia.
+ *
+ * @param {string} fqdn
+ */
+function signInLocation(fqdn) {
+  return `
+    # No session: the redirect to the domain's sign-in, back to this very
+    # URL with its query (Gatekeeper builds it; Authelia never sees the query)
+    location = ${SIGN_IN_LOCATION} {
+        internal;
+        auth_request off;
+
+        proxy_pass http://127.0.0.1:9294/authz/sign-in/${fqdn};
+        proxy_pass_request_body off;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
+
+        proxy_http_version 1.1;
+    }
+`;
 }
 
 /**
@@ -956,7 +1025,7 @@ export function accountLocations(domain, fqdn) {
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
         # This vhost's hostname, never the client's Host header
-        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Original-URL ${autheliaOriginalUrl(fqdn)};
         proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
 
         proxy_http_version 1.1;
@@ -973,16 +1042,14 @@ export function accountLocations(domain, fqdn) {
 
     location = ${AUTH_ACCOUNT_PASSWORD_PATH} {
         auth_request /internal/lamaste/account-authz;
-        auth_request_set $redirection_url $upstream_http_location;
-        error_page 401 =302 $redirection_url;
+        ${SIGN_IN_ON_401}
 
         root ${authBrandingDir(domain)};
         try_files /${AUTH_BRANDING_FILES.accountPassword} @account_password;${accountPageHeaders}
     }
     location @account_password {
         auth_request /internal/lamaste/account-authz;
-        auth_request_set $redirection_url $upstream_http_location;
-        error_page 401 =302 $redirection_url;
+        ${SIGN_IN_ON_401}
 
         root ${ACCOUNT_PASSWORD_DIR};
         try_files /index.html =404;${accountPageHeaders}
@@ -1098,7 +1165,7 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
         # This vhost's hostname, never the client's Host header
-        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Original-URL ${autheliaOriginalUrl(fqdn)};
         proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
 
         proxy_http_version 1.1;
@@ -1117,7 +1184,6 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
 
         auth_request /internal/authelia/authz;
         auth_request_set $user $upstream_http_remote_user;
-        auth_request_set $redirection_url $upstream_http_location;
 
         proxy_set_header Remote-User $user;
 
@@ -1127,12 +1193,13 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
 
-        error_page 401 =302 $redirection_url;
+        ${SIGN_IN_ON_401}
     }
 `
     : '';
   const config = `${zone}server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -1183,7 +1250,7 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${signInLocation(fqdn)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
@@ -1198,17 +1265,31 @@ ${autheliaIndexRewrite(branding, language, mail)}
   return { name: authVhostName(domain), fqdn, config };
 }
 
+/** Site name of chisel's WebSocket vhost (`tunnel.<primary domain>`). */
+export const CHISEL_TUNNEL_VHOST = 'lamalibre-lamaste-tunnel';
+
 /**
- * Write the Chisel tunnel WebSocket vhost.
+ * Chisel's WebSocket vhost: `tunnel.<domain>` proxied to chisel on
+ * 127.0.0.1:9090. Pure — written at onboarding ({@link writeTunnelVhost})
+ * and brought in line at every start (vhost-reconcile.js), on the
+ * certificate directory the installed file names.
+ *
+ * @param {string} domain the primary domain
+ * @param {string} [certPath] certificate directory (default: `tunnel.<domain>`'s lineage)
+ * @returns {{ name: string, fqdn: string, config: string }}
  */
-export async function writeTunnelVhost(domain) {
+export function renderChiselTunnelVhost(domain, certPath) {
   const fqdn = `tunnel.${domain}`;
+  assertLiteralHostname(fqdn);
+  let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
+  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
   const config = `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
-    ssl_certificate /etc/letsencrypt/live/${fqdn}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${fqdn}/privkey.pem;
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
@@ -1231,9 +1312,16 @@ export async function writeTunnelVhost(domain) {
     }
 }
 `;
+  return { name: CHISEL_TUNNEL_VHOST, fqdn, config };
+}
 
-  await writeVhostFile('lamalibre-lamaste-tunnel', config);
-  return path.join(SITES_AVAILABLE, 'lamalibre-lamaste-tunnel');
+/**
+ * Write the Chisel tunnel WebSocket vhost.
+ */
+export async function writeTunnelVhost(domain) {
+  const { name, config } = renderChiselTunnelVhost(domain);
+  await writeVhostFile(name, config);
+  return path.join(SITES_AVAILABLE, name);
 }
 
 /**
@@ -1658,6 +1746,7 @@ function renderPublicVhost(
 
   const config = `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -1819,6 +1908,7 @@ function buildGatekeeperVhost(
   const url = originalUrl(fqdn);
   return `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -2021,7 +2111,7 @@ export function renderStaticSiteVhost(site, certDir, domain) {
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
         # This site's hostname, never the client's Host header
-        proxy_set_header X-Original-URL ${originalUrl(site.fqdn)};
+        proxy_set_header X-Original-URL ${autheliaOriginalUrl(site.fqdn)};
         proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
 
         proxy_http_version 1.1;
@@ -2045,7 +2135,7 @@ export function renderStaticSiteVhost(site, certDir, domain) {
 
         proxy_http_version 1.1;
     }
-`;
+${signInLocation(site.fqdn)}`;
     locationAuthDirectives = `
         # Clear client-supplied identity headers (Authelia re-injects on success)
         proxy_set_header Remote-User "";
@@ -2058,12 +2148,12 @@ export function renderStaticSiteVhost(site, certDir, domain) {
         auth_request_set $groups $upstream_http_remote_groups;
         # $name and $email captured for future proxy use (no proxy_pass in static sites)
         auth_request_set $name $upstream_http_remote_name;
-        auth_request_set $email $upstream_http_remote_email;
-        auth_request_set $redirection_url $upstream_http_location;`;
+        auth_request_set $email $upstream_http_remote_email;`;
   }
 
   const config = `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${site.fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -2086,8 +2176,8 @@ ${autheliaBlock}
 ${
   gated
     ? `
-    # Redirect unauthenticated requests to Authelia login portal
-    error_page 401 =302 $redirection_url;
+    # No session: the sign-in of the site's domain, back to this URL
+    ${SIGN_IN_ON_401}
     error_page 403 = /internal/lamaste/refusal;
 `
     : ''
@@ -2254,6 +2344,7 @@ export function renderWebSurfaceVhost(site, certDir, domain, opts) {
 
   const head = `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${site.fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -2436,6 +2527,7 @@ function buildAliasRedirectBlock(site, certDirClean) {
   return `
 server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${aliases.join(' ')};
 
     ssl_certificate ${certDirClean}/fullchain.pem;
@@ -2645,6 +2737,7 @@ export function renderAgentPanelVhost(fqdn, domain, port, certPath) {
 
   const config = `server {
     listen 443 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name ${fqdn};
 
     ssl_certificate ${certDirClean}/fullchain.pem;

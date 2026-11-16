@@ -119,11 +119,12 @@ test('the tunnel the vhost names is the one authorized', async () => {
   assert.match(denied.body, /other\.example\.com/);
 
   // Authelia is asked about the URL of the tunnel named — once per session
-  // and host: a session it accepted for one tunnel is not taken for another.
+  // and host: a session it accepted for one tunnel is not taken for another
+  // — and never about its query, which it would log on a refusal.
   await check('other.example.com');
   assert.deepEqual(askedAuthelia, [
-    'https://granted.example.com/reports?year=2026',
-    'https://other.example.com/reports?year=2026',
+    'https://granted.example.com/reports',
+    'https://other.example.com/reports',
   ]);
 });
 
@@ -202,4 +203,63 @@ test('a request without Host is refused', async () => {
 test('hostnames agree regardless of case, and of the port in Host', async () => {
   const res = await check('Granted.example.com', 'GRANTED.example.com:443', 'granted.example.com');
   assert.equal(res.statusCode, 200);
+});
+
+/**
+ * A location that asks Authelia directly tells it the URL without its
+ * query; a request there without a session goes to /authz/sign-in/<host>,
+ * which sends the browser to the sign-in of the host's domain with the
+ * whole URL — query included, encoded as one `rd` — and decides nothing.
+ */
+const signIn = (named, originalUrl) =>
+  app.inject({
+    method: 'GET',
+    url: `/authz/sign-in/${named}`,
+    headers: {
+      host: named,
+      ...(originalUrl === undefined ? {} : { 'x-original-url': originalUrl }),
+    },
+  });
+
+test('the sign-in redirect carries the whole URL, query included, as one rd', async () => {
+  const url = 'https://site.example.com/api/user-access/authorize?challenge=a%2Bb&nonce=n#x';
+  const res = await signIn('site.example.com', url.slice(0, url.indexOf('#')));
+  assert.equal(res.statusCode, 302);
+  assert.equal(res.headers['cache-control'], 'no-store');
+  const location = new URL(res.headers.location);
+  assert.equal(location.origin, 'https://auth.example.com');
+  assert.equal(location.pathname, '/');
+  assert.deepEqual(
+    [...location.searchParams],
+    [['rd', 'https://site.example.com/api/user-access/authorize?challenge=a%2Bb&nonce=n']],
+  );
+
+  // The sign-in host itself (its password change), a URL without a path.
+  const portal = await signIn('auth.example.com', 'https://AUTH.example.com/account/password');
+  assert.equal(portal.statusCode, 302);
+  assert.equal(
+    portal.headers.location,
+    'https://auth.example.com/?rd=https%3A%2F%2FAUTH.example.com%2Faccount%2Fpassword',
+  );
+  assert.equal((await signIn('auth.example.com', 'https://auth.example.com')).statusCode, 302);
+  assert.deepEqual(askedAuthelia, [], 'Authelia is never asked');
+});
+
+test('the sign-in redirect refuses a URL on another host and a host under no domain', async () => {
+  for (const [named, url] of [
+    ['site.example.com', undefined],
+    ['site.example.com', 'https://other.example.com/'],
+    ['site.example.com', 'https://site.example.com.evil.test/'],
+    ['site.example.com', 'https://site.example.com@evil.test/'],
+    ['site.example.com', 'https://site.example.com:8443/'],
+    ['site.example.com', 'http://site.example.com/'],
+    ['site.example.com', 'https://site.example.com/a b'],
+    ['site.example.com', 'https://site.example.com/#frag'],
+    ['site.elsewhere.test', 'https://site.elsewhere.test/'],
+    ['localhost', 'https://localhost/'],
+  ]) {
+    const res = await signIn(named, url);
+    assert.equal(res.statusCode, 403, `${named} ${url}`);
+    assert.equal(res.headers.location, undefined);
+  }
 });

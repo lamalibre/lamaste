@@ -36,6 +36,7 @@ import {
   buildForbiddenPage,
 } from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
+import { autheliaTargetUrl, isOriginalUrlOn, signInRedirectUrl } from '../../lib/original-url.js';
 import type { AutheliaSession, TemplateOptions, TunnelInfo } from '../../lib/types.js';
 
 /**
@@ -111,7 +112,10 @@ const FORBIDDEN = 'forbidden';
  * Ask Authelia's verify endpoint about one session cookie for one URL, and
  * take the identity headers from its answer — or {@link FORBIDDEN} when it
  * refused a valid session for that URL. Authelia is sent that cookie alone
- * (`authelia_session=<value>`), never the browser's others.
+ * (`authelia_session=<value>`), never the browser's others, and the URL
+ * without its query ({@link autheliaTargetUrl}): Authelia logs the URL of
+ * every refusal, and decides by host alone. Callers keep the whole URL for
+ * their own checks.
  */
 async function validateWithAuthelia(
   session: string,
@@ -127,7 +131,7 @@ async function validateWithAuthelia(
       method: 'GET',
       headers: {
         Cookie: `${AUTHELIA_SESSION_COOKIE}=${session}`,
-        'X-Original-URL': originalUrl,
+        'X-Original-URL': autheliaTargetUrl(originalUrl),
         'X-Original-Method': 'GET',
         'X-Forwarded-For': '127.0.0.1',
         'X-Request-ID': requestId,
@@ -422,6 +426,40 @@ export async function authzRoutes(
         domain: domainShownFor(fastify, fqdn),
         site: true,
       });
+    },
+  );
+
+  /**
+   * GET /authz/sign-in/:fqdn — where a location that asks Authelia directly
+   * (an Authelia-protected static site, the sign-in host's password change
+   * and the desktop's `/api/user-access/authorize`) sends a request without
+   * a session (nginx `error_page 401`). Those locations tell Authelia the
+   * URL without its query, so Authelia's own redirect would bring the user
+   * back without it: this one carries `X-Original-URL` — nginx's
+   * `https://<fqdn>$request_uri`, the vhost naming its host in the path as
+   * for `/authz/refusal/:fqdn` — whole, encoded as `rd`, to the sign-in of
+   * the host's domain. Decides nothing and reads no session: 302, or 403
+   * when the URL is not on the host or the host is under none of the
+   * relay's domains.
+   */
+  fastify.get<{ Params: { fqdn: string } }>(
+    '/authz/sign-in/:fqdn',
+    { config: authzRateLimit },
+    async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const { fqdn } = request.params;
+      const refuse = (reason: string): FastifyReply => {
+        request.log.info({ requestId: request.id, reason, fqdn }, 'sign-in redirect refused');
+        return reply.code(403).send();
+      };
+      if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_host');
+      const originalUrl = request.headers['x-original-url'];
+      if (typeof originalUrl !== 'string' || !isOriginalUrlOn(originalUrl, fqdn)) {
+        return refuse('invalid_original_url');
+      }
+      const domain = domainShownFor(fastify, fqdn);
+      if (!domain) return refuse('unknown_domain');
+      return reply.code(302).header('Location', signInRedirectUrl(domain, originalUrl)).send();
     },
   );
 

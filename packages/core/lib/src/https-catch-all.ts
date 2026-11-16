@@ -7,6 +7,8 @@
  * in place and tells the administrators when it is not.
  */
 
+import { ACCESS_LOG_DIRECTIVE } from './request-privacy.js';
+
 /** The site's name in sites-available / sites-enabled. */
 export const HTTPS_CATCH_ALL_SITE = 'lamalibre-lamaste-https-default';
 
@@ -34,13 +36,15 @@ export const RELAY_TLS_DIRECTIVES: readonly string[] = [
  * ({@link RELAY_HTTPS_LISTEN}), their TLS settings
  * ({@link RELAY_TLS_DIRECTIVES}), no certificate (`ssl_reject_handshake`,
  * nginx ≥ 1.19.4), nothing answered should a request reach it anyway
- * (`return 444`).
+ * (`return 444`). It logs as every server block of the relay does
+ * ({@link ACCESS_LOG_DIRECTIVE}: the path, never the query).
  */
 export function renderHttpsCatchAllVhost(): string {
   return `# Managed by Lamaste — a hostname no site serves is refused at the TLS handshake.
 server {
     listen 443 ssl default_server;
     server_name _;
+    ${ACCESS_LOG_DIRECTIVE}
 ${RELAY_TLS_DIRECTIVES.map((line) => `    ${line}`).join('\n')}
     ssl_reject_handshake on;
     return 444;

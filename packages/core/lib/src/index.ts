@@ -668,6 +668,17 @@ export {
   renderBackendCookieMap,
 } from './authelia-session.js';
 
+// What nginx logs about a request and tells Authelia about one: the path,
+// never the query (an http-level map and log format create-lamaste installs)
+export {
+  ACCESS_LOG_DIRECTIVE,
+  ACCESS_LOG_FILE,
+  ACCESS_LOG_FORMAT,
+  REQUEST_PATH_VARIABLE,
+  REQUEST_PRIVACY_FILE,
+  renderRequestPrivacyConf,
+} from './request-privacy.js';
+
 // Settings secrets on the wire: sealed by the relay to the one request that
 // carries them, opened by the agent half with the verified request
 export {

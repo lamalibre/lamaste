@@ -338,6 +338,15 @@ const RULES = {
         a.length >= 1 && a[0] === '443' && a.slice(1).every((f) => f === 'ssl' || f === 'http2'),
     },
     server_name: { args: each(HOSTNAME_RE) },
+    // The relay's own access log, in the format that keeps no query, no
+    // client-chosen username and no referrer (core request-privacy.ts; the
+    // format comes from create-lamaste's http-level file): exactly this
+    // file and this format, nothing more — nginx's root master opens the
+    // file named here, and a format is never defined in a vhost.
+    access_log: {
+      args: (a) =>
+        a.length === 2 && a[0] === '/var/log/nginx/access.log' && a[1] === 'lamaste_noquery',
+    },
     ssl_certificate: {
       args: (a) => a.length === 1 && CERT_FILE_RE.test(a[0]) && !hasDotDotSegment(a[0]),
     },

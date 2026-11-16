@@ -340,7 +340,9 @@ test('a signed-in user gets a single-use assertion for the panel, bound to the m
   for (const name of ['remote-user', 'remote-groups', 'remote-name', 'remote-email']) {
     assert.equal(res.headers[name], undefined, `${name}: attributes come from the directory`);
   }
-  assert.deepEqual(askedAuthelia, [`https://piyasa.example.com${target}`]);
+  // Authelia is asked about the URL without its query (it logs the URL of a
+  // refusal); the assertion is bound to the raw target, query included.
+  assert.deepEqual(askedAuthelia, ['https://piyasa.example.com/api/market-indicators/app/notes']);
 
   const header = res.headers['x-lamalibre-relay-assertion'];
   const nonces = new NonceStore();
@@ -596,7 +598,8 @@ test('the shell of a web surface: a session in the plugin’s audience, never mo
       assert.equal(res.headers[name], undefined, `${cookie}: ${name}`);
     }
   }
-  assert.ok(askedAuthelia.includes('https://webfx.example.com/dashboard?tab=1'));
+  assert.ok(askedAuthelia.includes('https://webfx.example.com/dashboard'));
+  assert.ok(!askedAuthelia.some((u) => u.includes('?')), 'never a query');
 
   // A grant without roles is no entitlement: the access-request page.
   const carol = await shell('/', { cookie: 'authelia_session=carol' });

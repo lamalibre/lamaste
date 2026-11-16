@@ -105,6 +105,29 @@ const refused = {
   sub_filter_last_modified: location('  sub_filter_last_modified on;'),
   'single-quoted string followed by a character': location("  sub_filter 'a'b 'c';"),
   'access_log syslog in a location': location('  access_log syslog:server=127.0.0.1;'),
+  'the relay access log to another file': server(
+    ' access_log /var/log/nginx/other.log lamaste_noquery;',
+  ),
+  'the relay access log in another format': server(
+    ' access_log /var/log/nginx/access.log combined;',
+  ),
+  'the relay access log in the default format': server(' access_log /var/log/nginx/access.log;'),
+  'the relay access log with a buffer': server(
+    ' access_log /var/log/nginx/access.log lamaste_noquery buffer=32k;',
+  ),
+  'the relay access log with a condition': server(
+    ' access_log /var/log/nginx/access.log lamaste_noquery if=$x;',
+  ),
+  'the relay access log through a traversal': server(
+    ' access_log /var/log/nginx/../nginx/access.log lamaste_noquery;',
+  ),
+  'the relay access log in a location': location(
+    '  access_log /var/log/nginx/access.log lamaste_noquery;',
+  ),
+  'the relay access log at http level':
+    'access_log /var/log/nginx/access.log lamaste_noquery;\n' + server(''),
+  'log_format in a server': server(" log_format lamaste_noquery '$request';"),
+  'log_format in a location': location("  log_format lamaste_noquery '$request';"),
 };
 
 for (const [name, text] of Object.entries(refused)) {
@@ -124,6 +147,15 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
 
 test('accepts access_log off in a location — and nothing else of it', () => {
   validateVhost(location('  access_log off;\n  proxy_pass http://127.0.0.1:3100;'));
+});
+
+test('accepts the relay access log at server level — that file, that format, nothing more', () => {
+  validateVhost(
+    server(
+      ' access_log /var/log/nginx/access.log lamaste_noquery;\n' +
+        ' location / {\n  access_log off;\n  proxy_pass http://127.0.0.1:3100;\n }',
+    ),
+  );
 });
 
 test('accepts the content types of a web surface in a location', () => {
