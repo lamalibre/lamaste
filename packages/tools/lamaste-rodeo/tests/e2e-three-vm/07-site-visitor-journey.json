@@ -512,11 +512,209 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit site from visitor VM WITHOUT auth — should redirect to Authelia\"\n# ---------------------------------------------------------------------------\n\nUNAUTH_STATUS=$(visitor_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\n\nif [ \"$UNAUTH_STATUS\" = \"302\" ] || [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)\"\nelse\n  log_fail \"Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS\"\nfi\n\n# Verify redirect target is the Authelia portal\nUNAUTH_LOCATION=$(visitor_exec \"curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"\")\nif echo \"$UNAUTH_LOCATION\" | grep -qF \"auth.${TEST_DOMAIN}\"; then\n  log_pass \"Redirect points to Authelia portal (auth.${TEST_DOMAIN})\"\nelif [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Request returned 401 (Authelia enforcement confirmed)\"\nelse\n  log_fail \"Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)\"\nfi"
     },
     {
+      "id": "the-sign-in-redirect-carries-the-whole-url-the-access-log-keeps-no-query",
+      "label": "The sign-in redirect carries the whole URL; the access log keeps no query",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "",
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "PROBE_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "The sign-in redirect goes to the domain's portal",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PROBE_LOCATION"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${TEST_DOMAIN}/?rd="
+              },
+              "message": "The sign-in redirect goes to the domain's portal"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set PROBE_RD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%b' \"${PROBE_RD_ENCODED//%/\\\\x}\""
+          },
+          "capture": [
+            {
+              "variable": "PROBE_RD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "rd, decoded once, is the whole original URL with its query",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PROBE_RD"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PROBE_URL"
+              },
+              "message": "rd, decoded once, is the whole original URL with its query"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -c '${PROBE}' /var/log/nginx/access.log || true"
+          },
+          "capture": [
+            {
+              "variable": "PROBE_IN_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "The access log keeps no query (the probe value is nowhere)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PROBE_IN_LOG"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The access log keeps no query (the probe value is nowhere)"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'GET ${PROBE_PATH} HTTP' /var/log/nginx/access.log || true"
+          },
+          "capture": [
+            {
+              "variable": "PATH_IN_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "The access log keeps the path of the request",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The access log keeps the path of the request"
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "The access log has no line for ${PROBE_PATH} (count: ${PATH_IN_LOG})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The access log has no line for ${PROBE_PATH} (count: ${PATH_IN_LOG})"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -c '${PROBE}' /var/log/authelia/authelia.log 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "PROBE_IN_AUTHELIA",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Authelia's log holds no query either",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PROBE_IN_AUTHELIA"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Authelia's log holds no query either"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The sign-in redirect carries the whole URL; the access log keeps no query\"\n# ---------------------------------------------------------------------------\n\n# A query with two parameters and an encoded `&`: Gatekeeper's sign-in\n# redirect encodes the whole URL as one `rd`, so decoding it once gives the\n# URL back byte for byte. nginx logs the path, never the query.\nPROBE=\"e2eprobe${RUN_ID}x${RANDOM}\"\nPROBE_PATH=\"/e2e-07-probe-${RUN_ID}.html\"\nPROBE_URL=\"https://${SITE_FQDN}${PROBE_PATH}?probe=${PROBE}&next=a%26b\"\nPROBE_LOCATION=$(visitor_exec \"curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 '${PROBE_URL}' 2>/dev/null\" || echo \"\")\nassert_contains \"$PROBE_LOCATION\" \"https://auth.${TEST_DOMAIN}/?rd=\" \"The sign-in redirect goes to the domain's portal\" || true\nPROBE_RD_ENCODED=\"${PROBE_LOCATION#*rd=}\"\nPROBE_RD_ENCODED=\"${PROBE_RD_ENCODED%%&*}\"\nPROBE_RD=$(printf '%b' \"${PROBE_RD_ENCODED//%/\\\\x}\")\nassert_eq \"$PROBE_RD\" \"$PROBE_URL\" \"rd, decoded once, is the whole original URL with its query\" || true\n\nPROBE_IN_LOG=$(host_exec \"grep -c '${PROBE}' /var/log/nginx/access.log || true\")\nassert_eq \"$PROBE_IN_LOG\" \"0\" \"The access log keeps no query (the probe value is nowhere)\" || true\nPATH_IN_LOG=$(host_exec \"grep -c 'GET ${PROBE_PATH} HTTP' /var/log/nginx/access.log || true\")\nif [ \"${PATH_IN_LOG:-0}\" -ge 1 ] 2>/dev/null; then\n  log_pass \"The access log keeps the path of the request\"\nelse\n  log_fail \"The access log has no line for ${PROBE_PATH} (count: ${PATH_IN_LOG})\"\nfi\nPROBE_IN_AUTHELIA=$(host_exec \"grep -c '${PROBE}' /var/log/authelia/authelia.log 2>/dev/null || true\")\nassert_eq \"$PROBE_IN_AUTHELIA\" \"0\" \"Authelia's log holds no query either\" || true"
+    },
+    {
       "id": "reset-totp-before-authentication",
       "label": "Reset TOTP before authentication",
       "steps": [
         {
-          "id": "step-22",
+          "id": "step-38",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -535,7 +733,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-39",
           "label": "Extract TOTP_URI",
           "target": "local",
           "op": {
@@ -552,7 +750,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-40",
           "label": "TOTP reset succeeded, got otpauth URI",
           "target": "local",
           "op": {
@@ -562,7 +760,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-41",
           "label": "Failed to reset TOTP for ${TEST_USER} (response: $TOTP_RESPONSE)",
           "target": "local",
           "op": {
@@ -572,7 +770,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-42",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -589,7 +787,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-43",
           "label": "Failed to extract TOTP secret from URI: $TOTP_URI",
           "target": "local",
           "op": {
@@ -613,7 +811,7 @@
       "label": "Authenticate with Authelia from visitor VM (firstfactor)",
       "steps": [
         {
-          "id": "step-29",
+          "id": "step-45",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -638,7 +836,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-46",
           "label": "Extract AUTH_STATUS",
           "target": "local",
           "op": {
@@ -655,7 +853,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-47",
           "label": "Authelia firstfactor authentication succeeded",
           "target": "local",
           "op": {
@@ -670,7 +868,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-48",
           "label": "Authelia firstfactor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -692,7 +890,7 @@
       "label": "Authenticate with Authelia from visitor VM (secondfactor TOTP)",
       "steps": [
         {
-          "id": "step-33",
+          "id": "step-49",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -713,7 +911,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-50",
           "label": "Generated TOTP code with oathtool on visitor VM",
           "target": "local",
           "op": {
@@ -727,7 +925,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-51",
           "label": "Failed to generate TOTP code",
           "target": "local",
           "op": {
@@ -744,7 +942,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-52",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -770,7 +968,7 @@
           ]
         },
         {
-          "id": "step-37",
+          "id": "step-53",
           "label": "Extract TOTP_AUTH_STATUS",
           "target": "local",
           "op": {
@@ -787,7 +985,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-54",
           "label": "Authelia secondfactor TOTP authentication succeeded",
           "target": "local",
           "op": {
@@ -802,7 +1000,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-55",
           "label": "Authelia secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -824,7 +1022,7 @@
       "label": "Visit site from visitor VM WITH auth — should return content",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-56",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -846,7 +1044,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-57",
           "label": "Authenticated request returns site content",
           "target": "local",
           "continueOnError": true,
@@ -867,7 +1065,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-58",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -890,7 +1088,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-59",
           "label": "Authenticated request returns HTTP 200",
           "target": "local",
           "continueOnError": true,
@@ -918,7 +1116,7 @@
       "label": "Disable Authelia protection",
       "steps": [
         {
-          "id": "step-44",
+          "id": "step-60",
           "label": "PATCH /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -939,7 +1137,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-61",
           "label": "Disable Authelia protection returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -961,7 +1159,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-62",
           "label": "Site shows autheliaProtected: false",
           "target": "local",
           "continueOnError": true,
@@ -983,7 +1181,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-63",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -999,7 +1197,7 @@
       "label": "Visit site from visitor VM WITHOUT auth — should now return content (unprotected)",
       "steps": [
         {
-          "id": "step-48",
+          "id": "step-64",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1019,7 +1217,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-65",
           "label": "Unprotected site returns HTTP 200 without auth",
           "target": "local",
           "continueOnError": true,
@@ -1040,7 +1238,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-66",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1059,7 +1257,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-67",
           "label": "Unprotected site returns expected content",
           "target": "local",
           "continueOnError": true,
@@ -1087,7 +1285,7 @@
       "label": "Re-enable Authelia protection",
       "steps": [
         {
-          "id": "step-52",
+          "id": "step-68",
           "label": "PATCH /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -1108,7 +1306,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-69",
           "label": "Re-enable Authelia protection returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1130,7 +1328,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-70",
           "label": "Site shows autheliaProtected: true",
           "target": "local",
           "continueOnError": true,
@@ -1152,7 +1350,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-71",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1168,7 +1366,7 @@
       "label": "Verify protection is back — visitor without auth should redirect",
       "steps": [
         {
-          "id": "step-56",
+          "id": "step-72",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1188,7 +1386,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-73",
           "label": "Re-protected site redirects/rejects unauthenticated request (HTTP $REPROTECTED_STATUS)",
           "target": "local",
           "op": {
@@ -1213,7 +1411,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-74",
           "label": "Re-protected site should redirect (302 or 401), got HTTP $REPROTECTED_STATUS",
           "target": "local",
           "op": {
@@ -1245,7 +1443,7 @@
       "label": "Cleanup: delete site via API",
       "steps": [
         {
-          "id": "step-59",
+          "id": "step-75",
           "label": "DELETE /api/sites/${SITE_ID}",
           "target": "host",
           "op": {
@@ -1263,7 +1461,7 @@
           ]
         },
         {
-          "id": "step-60",
+          "id": "step-76",
           "label": "Site deletion returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1285,7 +1483,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-78",
           "label": "GET /api/sites",
           "target": "host",
           "op": {
@@ -1303,7 +1501,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-79",
           "label": "Set FOUND_SITE",
           "target": "local",
           "op": {
@@ -1320,7 +1518,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-80",
           "label": "Site no longer appears in site list after deletion",
           "target": "local",
           "continueOnError": true,
@@ -1348,7 +1546,7 @@
       "label": "Custom-domain site with an alias: create and verify DNS",
       "steps": [
         {
-          "id": "step-65",
+          "id": "step-81",
           "label": "POST /api/sites",
           "target": "host",
           "op": {
@@ -1367,7 +1565,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-82",
           "label": "Custom site with alias ${ALIAS_WWW} created",
           "target": "local",
           "continueOnError": true,
@@ -1389,7 +1587,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-83",
           "label": "Extract ALIAS_SITE_ID",
           "target": "local",
           "op": {
@@ -1406,7 +1604,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-84",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1415,7 +1613,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-85",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -1424,7 +1622,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-86",
           "label": "POST /api/sites/${ALIAS_SITE_ID}/verify-dns",
           "target": "host",
           "op": {
@@ -1443,7 +1641,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-87",
           "label": "verify-dns succeeds for the domain and its alias",
           "target": "local",
           "continueOnError": true,
@@ -1465,7 +1663,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-88",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1482,7 +1680,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-89",
           "label": "One certificate lineage covers the domain and ${ALIAS_WWW}",
           "target": "local",
           "continueOnError": true,
@@ -1503,7 +1701,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-90",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1512,7 +1710,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-91",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -1528,7 +1726,7 @@
       "label": "Visitor follows the alias to the site's domain",
       "steps": [
         {
-          "id": "step-76",
+          "id": "step-92",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1547,7 +1745,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-93",
           "label": "Alias answers 301 to the same path on the site's domain (TLS verified)",
           "target": "local",
           "continueOnError": true,
@@ -1568,7 +1766,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-94",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1587,7 +1785,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-95",
           "label": "Following the alias serves the site's content",
           "target": "local",
           "continueOnError": true,
@@ -1615,7 +1813,7 @@
       "label": "Add an alias to the live site",
       "steps": [
         {
-          "id": "step-80",
+          "id": "step-96",
           "label": "PATCH /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -1634,7 +1832,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-97",
           "label": "Alias ${ALIAS_BLOG} added to the live site",
           "target": "local",
           "continueOnError": true,
@@ -1656,7 +1854,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-98",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1665,7 +1863,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-99",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1684,7 +1882,7 @@
           ]
         },
         {
-          "id": "step-84",
+          "id": "step-100",
           "label": "New alias answers 301 with a certificate that names it",
           "target": "local",
           "continueOnError": true,
@@ -1712,7 +1910,7 @@
       "label": "Cleanup: delete the custom-domain site",
       "steps": [
         {
-          "id": "step-85",
+          "id": "step-101",
           "label": "DELETE /api/sites/${ALIAS_SITE_ID}",
           "target": "host",
           "op": {
@@ -1730,7 +1928,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-102",
           "label": "Custom-domain site deleted",
           "target": "local",
           "continueOnError": true,
@@ -1756,7 +1954,7 @@
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 07 — Static Site Visitor Journey (Three-VM)\n# ============================================================================\n# Tests the full visitor experience for a managed static site from an external\n# visitor VM:\n#\n# 1. Create a managed static site via API (Authelia-protected)\n# 2. Write a test index.html to the site directory\n# 3. Visit site from visitor VM without auth — should redirect to Authelia (302)\n# 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)\n# 5. Visit site from visitor VM with auth — should return site content (200)\n# 6. Disable Authelia protection via PATCH\n# 7. Visit site from visitor VM without auth — should now return content (200)\n# 8. Re-enable Authelia protection via PATCH\n# 9. Visit site from visitor VM without auth — should redirect again (302)\n# 10. Cleanup: delete the site\n# 11. Custom-domain site with an alias: verify DNS (dnsmasq on the host\n#     resolves the custom domain), then from the visitor the alias answers\n#     301 to the same path on the site's domain and following it serves the\n#     site; adding an alias to the live site re-issues the certificate\n#\n# Every visitor request verifies the host's certificate (no -k): the visitor\n# trusts the E2E test CA (setup-visitor.sh), so a certificate that does not\n# name the requested host — e.g. an alias missing from subjectAltName — fails.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 07 — Static Site Visitor Journey (Three-VM)\n# ============================================================================\n# Tests the full visitor experience for a managed static site from an external\n# visitor VM:\n#\n# 1. Create a managed static site via API (Authelia-protected)\n# 2. Write a test index.html to the site directory\n# 3. Visit site from visitor VM without auth — should redirect to Authelia (302)\n#    — with a query holding `&`: the sign-in redirect's `rd`, decoded once, is\n#    the whole URL; nginx's access log keeps the path and no query, Authelia's\n#    log no query\n# 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)\n# 5. Visit site from visitor VM with auth — should return site content (200)\n# 6. Disable Authelia protection via PATCH\n# 7. Visit site from visitor VM without auth — should now return content (200)\n# 8. Re-enable Authelia protection via PATCH\n# 9. Visit site from visitor VM without auth — should redirect again (302)\n# 10. Cleanup: delete the site\n# 11. Custom-domain site with an alias: verify DNS (dnsmasq on the host\n#     resolves the custom domain), then from the visitor the alias answers\n#     301 to the same path on the site's domain and following it serves the\n#     site; adding an alias to the live site re-issues the certificate\n#\n# Every visitor request verifies the host's certificate (no -k): the visitor\n# trusts the E2E test CA (setup-visitor.sh), so a certificate that does not\n# name the requested host — e.g. an alias missing from subjectAltName — fails.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSITE_NAME=\"e2eblog\"\nSITE_FQDN=\"${SITE_NAME}.${TEST_DOMAIN}\"\nSITE_ID=\"\"\nMARKER=\"E2E_SITE_TEST_OK_$(date +%s)\"\n\n# Custom-domain site with aliases (section 11)\nRUN_ID=\"$(date +%s)\"\nCUSTOM_DOMAIN=\"e2e-alias-${RUN_ID}.test\"\nALIAS_WWW=\"www.${CUSTOM_DOMAIN}\"\nALIAS_BLOG=\"blog.${CUSTOM_DOMAIN}\"\nALIAS_SITE_ID=\"\"\nALIAS_MARKER=\"E2E_ALIAS_SITE_OK_${RUN_ID}\"\nALIAS_DNSMASQ_CONF=\"/etc/dnsmasq.d/lamaste-e2e-07-aliases.conf\"\n\nbegin_test \"07 — Static Site Visitor Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-site-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${SITE_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${SITE_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$ALIAS_SITE_ID\" ] && [ \"$ALIAS_SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${ALIAS_SITE_ID}\" > /dev/null 2>&1 || true\n  fi\n  visitor_exec \"sed -i '/${CUSTOM_DOMAIN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  host_exec \"rm -f ${ALIAS_DNSMASQ_CONF} && systemctl restart dnsmasq\" > /dev/null 2>&1 || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

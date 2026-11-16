@@ -8,6 +8,9 @@
 # 1. Create a managed static site via API (Authelia-protected)
 # 2. Write a test index.html to the site directory
 # 3. Visit site from visitor VM without auth — should redirect to Authelia (302)
+#    — with a query holding `&`: the sign-in redirect's `rd`, decoded once, is
+#    the whole URL; nginx's access log keeps the path and no query, Authelia's
+#    log no query
 # 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)
 # 5. Visit site from visitor VM with auth — should return site content (200)
 # 6. Disable Authelia protection via PATCH
@@ -165,6 +168,34 @@ elif [ "$UNAUTH_STATUS" = "401" ]; then
 else
   log_fail "Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)"
 fi
+
+# ---------------------------------------------------------------------------
+log_section "The sign-in redirect carries the whole URL; the access log keeps no query"
+# ---------------------------------------------------------------------------
+
+# A query with two parameters and an encoded `&`: Gatekeeper's sign-in
+# redirect encodes the whole URL as one `rd`, so decoding it once gives the
+# URL back byte for byte. nginx logs the path, never the query.
+PROBE="e2eprobe${RUN_ID}x${RANDOM}"
+PROBE_PATH="/e2e-07-probe-${RUN_ID}.html"
+PROBE_URL="https://${SITE_FQDN}${PROBE_PATH}?probe=${PROBE}&next=a%26b"
+PROBE_LOCATION=$(visitor_exec "curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 '${PROBE_URL}' 2>/dev/null" || echo "")
+assert_contains "$PROBE_LOCATION" "https://auth.${TEST_DOMAIN}/?rd=" "The sign-in redirect goes to the domain's portal" || true
+PROBE_RD_ENCODED="${PROBE_LOCATION#*rd=}"
+PROBE_RD_ENCODED="${PROBE_RD_ENCODED%%&*}"
+PROBE_RD=$(printf '%b' "${PROBE_RD_ENCODED//%/\\x}")
+assert_eq "$PROBE_RD" "$PROBE_URL" "rd, decoded once, is the whole original URL with its query" || true
+
+PROBE_IN_LOG=$(host_exec "grep -c '${PROBE}' /var/log/nginx/access.log || true")
+assert_eq "$PROBE_IN_LOG" "0" "The access log keeps no query (the probe value is nowhere)" || true
+PATH_IN_LOG=$(host_exec "grep -c 'GET ${PROBE_PATH} HTTP' /var/log/nginx/access.log || true")
+if [ "${PATH_IN_LOG:-0}" -ge 1 ] 2>/dev/null; then
+  log_pass "The access log keeps the path of the request"
+else
+  log_fail "The access log has no line for ${PROBE_PATH} (count: ${PATH_IN_LOG})"
+fi
+PROBE_IN_AUTHELIA=$(host_exec "grep -c '${PROBE}' /var/log/authelia/authelia.log 2>/dev/null || true")
+assert_eq "$PROBE_IN_AUTHELIA" "0" "Authelia's log holds no query either" || true
 
 # ---------------------------------------------------------------------------
 log_section "Reset TOTP before authentication"

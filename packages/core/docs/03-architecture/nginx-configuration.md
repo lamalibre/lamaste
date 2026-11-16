@@ -592,7 +592,7 @@ server {
 
     # Every path of the shell: Gatekeeper first (the API's locations ask on their own)
     auth_request /internal/lamaste/shell-authz;
-    error_page 401 =302 https://auth.example.com/?rd=https://piyasa.example.com$request_uri;
+    error_page 401 = /internal/lamaste/sign-in;   # Gatekeeper's sign-in redirect, below
     error_page 403 = /internal/lamaste/shell-authz;
 
     location = /internal/lamaste/shell-authz {
@@ -754,8 +754,9 @@ server {
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login, back to this vhost
-        error_page 401 =302 https://auth.<domain>/?rd=https://app.example.com$request_uri;
+        # No session -> the domain's sign-in, back to this very URL, query included
+        # (location = /internal/lamaste/sign-in, see "Access logging and queries")
+        error_page 401 = /internal/lamaste/sign-in;
     }
 }
 ```
@@ -831,8 +832,8 @@ server {
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login, back to this vhost
-        error_page 401 =302 https://auth.<domain>/?rd=https://restricted-app.example.com$request_uri;
+        # No session -> the domain's sign-in, back to this very URL, query included
+        error_page 401 = /internal/lamaste/sign-in;
 
         # Authorization failure -> Gatekeeper serves inline access-request page
         error_page 403 = /internal/lamaste/authz;
@@ -943,7 +944,7 @@ An `authenticated` or `restricted` app tunnel bound as the user surface of agent
 
 ### Authorization subrequests name their own hostname
 
-Every authorization subrequest — to Gatekeeper from an `authenticated` or `restricted` tunnel vhost (app and plugin tunnels), to Authelia from a protected static site, from the auth portal's `/api/user-access/authorize` and from its change-password page — names the vhost by its own hostname, written into the configuration: `X-Original-URL https://<fqdn>$request_uri` to Gatekeeper, which also gets the path, `/authz/tunnel/<fqdn>`, and `Host <fqdn>`; `X-Original-URL https://<fqdn>$lamaste_request_path` — the same URL without its query — to Authelia ([Access logging and queries](#access-logging-and-queries)). A tunnel's 401 login redirect returns to `https://<fqdn>$request_uri`; where Authelia is asked directly, a request without a session goes to Gatekeeper's `/authz/sign-in/<fqdn>`, which answers with the redirect to the sign-in, the whole URL — query included — as `rd`. The client's `X-Forwarded-Host`, `-Proto`, `-Uri` and `-Method` are cleared in these subrequests. Generated vhosts contain no `$http_host`.
+Every authorization subrequest — to Gatekeeper from an `authenticated` or `restricted` tunnel vhost (app and plugin tunnels), to Authelia from a protected static site, from the auth portal's `/api/user-access/authorize` and from its change-password page — names the vhost by its own hostname, written into the configuration: `X-Original-URL https://<fqdn>$request_uri` to Gatekeeper, which also gets the path, `/authz/tunnel/<fqdn>`, and `Host <fqdn>`; `X-Original-URL https://<fqdn>$lamaste_request_path` — the same URL without its query — to Authelia ([Access logging and queries](#access-logging-and-queries)). Every page without a session — a tunnel's, a web-surface shell's, a protected static site's, the portal's change-password page and `/api/user-access/authorize` — goes to Gatekeeper's `/authz/sign-in/<domain>/<fqdn>`, which answers with the redirect to the sign-in, the whole `https://<fqdn>$request_uri` — query included, encoded — as `rd`. The client's `X-Forwarded-Host`, `-Proto`, `-Uri` and `-Method` are cleared in these subrequests. Generated vhosts contain no `$http_host`.
 
 nginx selects the vhost from the request line when a request is in absolute form (`GET https://a.example.com/x HTTP/1.1`) and from `Host` otherwise, so a client can send the request line of one hostname with the `Host` header of another. Vhosts written before 4.3 built `X-Original-URL` and `Host` from `$http_host` — the client's `Host` header — so the subrequest asked about the other hostname while nginx served this one: an Authelia user allowed on any tunnel (every user, on an `authenticated` tunnel) reached any `restricted` tunnel, app or plugin, without a grant, and any Authelia user reached a static site restricted to other users. `$host` would not fix it — on the default server it is whatever `Host` the client sent. `$request_uri` is what follows the host in the request target — it starts with `/`, or with `?` for an absolute-form target without a path — so it cannot change the URL's host; the scheme is fixed because every such vhost listens on 443 with TLS only. The generators refuse a hostname that is not a plain DNS name, so nothing but a literal reaches these headers. For the auth portal the change is hardening: no rule Lamaste writes for Authelia is more permissive than the portal's own (the default, `two_factor`), so naming another hostname there gained nothing.
 
@@ -956,7 +957,7 @@ Authelia evaluates the raw `$request_uri`, while nginx serves the normalized `$u
 A relay may serve several base domains ([Domains API](../04-api-reference/domains.md)). Vhost files are therefore named by full hostname — `lamalibre-lamaste-app-<fqdn>`, `lamalibre-lamaste-agent-panel-<fqdn>`, `lamalibre-lamaste-auth-<domain>` — so the same subdomain on two domains never shares a file. At start the panel renames vhosts written under the earlier names (`lamalibre-lamaste-app-<subdomain>`, `lamalibre-lamaste-agent-panel-<subdomain>`, `lamalibre-lamaste-auth`): the new file is written with the old one's link state, the old file and link removed, then one `nginx -t` and reload, with the old files restored if the test fails. `lamaste-priv` accepts the hostname names for every action and the legacy names for everything but `write`.
 
 - **One auth vhost per active domain** (`auth.<domain>`, its own certificate). Only the primary's carries `/api/user-access/authorize` and the `user_access_auth` rate-limit zone (desktop user access is primary-only); every domain's serves `/`, `/invite`, `/invitations/`, `/api/invite/` and `/api/delegated-invitations/`.
-- **The 401 redirect** of tunnel and web-surface vhosts goes to `https://auth.<the host's domain>/?rd=…`; static sites and the auth portal's own protected pages go through Gatekeeper's `/authz/sign-in/<fqdn>`, which sends the browser to the same portal with the original URL encoded as `rd`.
+- **The 401 redirect** of every page that asks for a session — tunnels, web-surface shells, protected static sites, the auth portal's own protected pages — goes through Gatekeeper's `/authz/sign-in/<domain>/<fqdn>`, the domain written by the vhost's generator, which sends the browser to `https://auth.<domain>/` with the original URL encoded as `rd`. A user surface's API answers JSON (`401`), never a redirect.
 - **A 403** from Gatekeeper (a signed-in non-member, or a missing grant) is served inline; Authelia-protected static sites route `error_page 403` to Gatekeeper's `/authz/refusal/<fqdn>`.
 - **Authenticated and restricted tunnels share one vhost** (`writeGatekeeperVhost`): Gatekeeper decides by the access mode in `tunnels.json`.
 - **Certificates** stay HTTP-01 per hostname; a wildcard is used when one for the host's domain is already present.
@@ -1010,7 +1011,25 @@ log_format lamaste_noquery '$remote_addr - - [$time_local] "$request_method $lam
 
 `$lamaste_request_path` is the request's path as the client sent it — `$request_uri` up to its first `?` or `#` — rather than `$uri`: not decoded (a percent-encoded byte stays encoded, so a line keeps its shape), and not changed by an internal redirect, so the log names the path the client asked for, not an `error_page` or `try_files` target. The path itself is kept: an application that puts a personal identifier in a path segment still has it logged. The locations that already logged nothing (`access_log off` — Google's return from a mail consent, a native app's redirect paths) still log nothing.
 
-**Authelia.** Asked about a URL (`X-Original-URL` on `/api/authz/auth-request`), Authelia logs it at `info` whenever it refuses a signed-in user — into the journal. Lamaste writes no `resources` rules into Authelia's `access_control` (it decides by host and subject), so Authelia never needs the query: the locations that ask it directly (a protected static site, the change-password page, the desktop's `/api/user-access/authorize`) send `https://<fqdn>$lamaste_request_path`, and Gatekeeper cuts the query (at the first `?` or `#`, from the raw string) before it asks Authelia — while it keeps the whole original URL for its own checks (a user surface's target, the assertion's path, byte for byte). Authelia's own 401 redirect is built from the URL it was asked about, so it would bring the user back without the query; those locations therefore send a request without a session (`error_page 401 = /internal/lamaste/sign-in;`) to Gatekeeper's `/authz/sign-in/<fqdn>`, which reads `X-Original-URL https://<fqdn>$request_uri` (an internal redirect keeps `$request_uri`) and answers `302` to `https://auth.<the host's domain>/?rd=<the whole URL, encoded>` — no cookie sent, nothing decided, 403 for a URL not on that host or a host under none of the relay's domains.
+**Authelia.** Asked about a URL (`X-Original-URL` on `/api/authz/auth-request`), Authelia logs it at `info` whenever it refuses a signed-in user — into its log file, `/var/log/authelia/authelia.log` (`log.file_path`). Lamaste writes no `resources` rules into Authelia's `access_control` (it decides by host and subject), so Authelia is no longer asked about a query: the locations that ask it directly (a protected static site, the change-password page, the desktop's `/api/user-access/authorize`) send `https://<fqdn>$lamaste_request_path`, and Gatekeeper cuts the query (at the first `?` or `#`, from the raw string) before it asks Authelia — while it keeps the whole original URL for its own checks (a user surface's target, the assertion's path, byte for byte).
+
+**The sign-in redirect.** Authelia's own 401 redirect is built from the URL it was asked about, so it would bring the user back without the query; and the redirect tunnel and web-surface vhosts used to write themselves (`?rd=https://<fqdn>$request_uri`) could not encode the URL, so an `&` in its query ended `rd`. Every page that asks for a session now sends a request without one (`error_page 401 = /internal/lamaste/sign-in;`) to one internal location:
+
+```nginx
+    location = /internal/lamaste/sign-in {
+        internal;
+        auth_request off;
+        proxy_pass http://127.0.0.1:9294/authz/sign-in/<domain>/<fqdn>;
+        proxy_pass_request_body off;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-Original-URL https://<fqdn>$request_uri;   # an internal redirect keeps it
+        proxy_set_header Host <fqdn>;
+        # … Content-Length, Connection, X-Forwarded-* cleared
+    }
+```
+
+Gatekeeper answers `302` to `https://auth.<domain>/?rd=<the whole URL, percent-encoded byte for byte>` — no cookie sent, no session or projection read, nothing decided; `403` when the host is not the domain or under it, or the URL or `Host` names another host. A user surface's API keeps its JSON `401` (`/internal/lamaste/user-surface-401`). **Gatekeeper must be running** for these redirects, as it must for a tunnel's authorization: without it a page without a session gets nginx's `502`. The redeploy starts Gatekeeper whenever it installs it. Authelia's portal receives the whole URL as `rd`, which it logs at `debug` only (the relay runs it at `info`).
 
 Both come from one http-level file create-lamaste installs as `/etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf` (core `renderRequestPrivacyConf()`, root-owned 0644, atomic, never through a symlink):
 
@@ -1022,10 +1041,12 @@ map $request_uri $lamaste_request_path {
 log_format lamaste_noquery '…as above…';
 ```
 
-- **Order of installation.** nginx refuses a vhost naming the format or the variable without the file (`nginx -t`), so it is installed before any such vhost: on a fresh install first among nginx's steps, before the IP panel vhost; on a redeploy beside the backend cookie map, before the running panel is stopped (a relay whose nginx refuses it keeps the version it runs). The redeploy then refreshes the installer's own sites, and the panel it starts rewrites every vhost it manages ([Rewritten at Startup](#rewritten-at-startup)).
+- **Order of installation.** nginx refuses a vhost naming the format or the variable without the file (`nginx -t`), so it is installed before any such vhost: on a fresh install first among nginx's steps, before the IP panel vhost; on a redeploy beside the backend cookie map, before the running panel is stopped (a relay whose nginx refuses it keeps the version it runs). The redeploy then refreshes the installer's own sites, and the panel it starts rewrites the vhosts it manages and can render ([Rewritten at Startup](#rewritten-at-startup)); the panel raises any enabled vhost still without the directive.
 - **Logs written before the update** keep their queries until logrotate ages them out (Ubuntu's default: daily, 14 rotations, about two weeks). An operator who wants them gone sooner removes `/var/log/nginx/access.log.*` by hand.
-- **nginx's error log is not covered.** It has no format: on an upstream error (a tunnel down — `connect() failed` —, a backend that does not answer) nginx writes `request: "GET /path?query HTTP/1.1"` and the `referrer` into `/var/log/nginx/error.log`. Lamaste leaves the error log's level as it is; see the security model.
-- **Tested** where an nginx binary is installed: the file in a real `http {}` block, a server logging with the directive and a location sending `X-Original-URL` as the Authelia locations do (`packages/provisioners/server/test/request-privacy.test.js`); every rendered server block carries the directive exactly once at server level (`packages/server/daemon/test/nginx-vhosts.test.js`).
+- **When the guarantee does not hold, the administrators are told.** The panel reads the file and every `lamalibre-lamaste-*` link in `sites-enabled` after its start-up reconcile and every 10 minutes (`lib/request-privacy-check.js`): the file missing, changed or unreadable, or an enabled vhost whose server blocks do not each carry the directive — a vhost the reconcile left as it was, an orphan nobody renders, an installer site whose refresh failed — is audited (`relay.request-privacy.degraded`, with the vhosts' names) and notified (warning) when it starts, when what is wrong changes and once a day while it lasts; its return is audited (`relay.request-privacy.restored`). `GET /api/system/stats` carries it as `requestPrivacy`. The reconcile's own log line marks each vhost it left as it was that keeps the combined log (`logsQueries`).
+- **No vhost sets a `$lamaste_` variable.** `lamaste-priv` refuses a `map` onto one, an `auth_request_set` of one and a named regex capture called `lamaste_…` anywhere: the variables of the installer's files stay what they define.
+- **nginx's error log is not covered.** It has no format: on an upstream error (a tunnel down — `connect() failed` —, a backend that does not answer) nginx writes `request: "GET /path?query HTTP/1.1"` and the `referrer` into `/var/log/nginx/error.log`, and a request `limit_req` rejects (`/api/user-access/authorize`, with its `?challenge=…&nonce=…`) is logged there the same way. Lamaste leaves the error log's level as it is; see the security model.
+- **Tested** where an nginx binary is installed: the file in a real `http {}` block, a server logging with the directive, a location sending `X-Original-URL` as the Authelia locations do, and a `401` sent to a sign-in location that gets the whole URL while Authelia's stand-in gets the path (`packages/provisioners/server/test/request-privacy.test.js`); every rendered server block carries the directive exactly once, right after `listen` (`packages/server/daemon/test/nginx-vhosts.test.js`).
 
 ## nginx Cache Zone (`lamaste_authz`)
 
@@ -1184,7 +1205,7 @@ The Authelia forward auth integration uses nginx's `auth_request` module. Protec
    │  │         Proxy to tunneled app at 127.0.0.1:<port>
    │  │
    │  └── 401 → error_page 401 = /internal/lamaste/sign-in
-   │            → Gatekeeper /authz/sign-in/<fqdn> answers 302 to
+   │            → Gatekeeper /authz/sign-in/<domain>/<fqdn> answers 302 to
    │              https://auth.<domain>/?rd=<the whole URL, query included>
    │
 5. After Authelia login (TOTP verified):
@@ -1262,8 +1283,8 @@ Beside them the installer writes the http-level map `conf.d/lamalibre-lamaste-ba
 # Managed by Lamaste — plain HTTP is redirected to HTTPS.
 server {
     listen 80 default_server;
-    server_name _;
     access_log /var/log/nginx/access.log lamaste_noquery;
+    server_name _;
     return 301 https://$host$request_uri;
 }
 ```
@@ -1276,8 +1297,8 @@ Without it nothing listens on port 80 and `http://` links to the relay's hostnam
 # Managed by Lamaste — a hostname no site serves is refused at the TLS handshake.
 server {
     listen 443 ssl default_server;
-    server_name _;
     access_log /var/log/nginx/access.log lamaste_noquery;
+    server_name _;
     ssl_reject_handshake on;
     return 444;
 }
@@ -1311,9 +1332,9 @@ A vhost is written when its tunnel or site is created or changed, so a generator
 
 - **Plugins' web surfaces** (plugin-owned sites): once plugins and hostings can be read (`reconcileWebSurfaces`), each owned site's vhost brought in line the same way.
 
-The installer's own sites — the IP panel vhost, the port-80 redirect, the 443 catch-all — are not the panel's to write; `create-lamaste`'s redeploy refreshes them when their text differs. Together that is how every vhost of an upgraded relay starts logging the path rather than the query ([Access logging and queries](#access-logging-and-queries)), and how vhosts written before 4.3 start forwarding relay assertions (agent-panel and plugin tunnels) and start naming their own hostname to Gatekeeper and Authelia (see [above](#authorization-subrequests-name-their-own-hostname)). A rewrite never adds or removes authentication: a tunnel or site vhost whose `auth_request` disagrees with its state (a public vhost for a restricted tunnel, say) is logged and left alone until the tunnel or site is reconfigured — the agent-panel vhost, which gains the panel's `auth_request` beside its mTLS check, is the exception. Missing vhosts are logged (a site still waiting for its certificate has none yet); a failed rewrite restores the previous file and the others still run.
+The installer's own sites — the IP panel vhost, the port-80 redirect, the 443 catch-all — are not the panel's to write; `create-lamaste`'s redeploy refreshes them when their text differs. Together that is how the vhosts of an upgraded relay start logging the path rather than the query ([Access logging and queries](#access-logging-and-queries)) — each vhost the panel can render from its state, each installer site whose refresh succeeds; any enabled vhost still without it is raised to the administrators by name — and how vhosts written before 4.3 start forwarding relay assertions (agent-panel and plugin tunnels) and start naming their own hostname to Gatekeeper and Authelia (see [above](#authorization-subrequests-name-their-own-hostname)). A rewrite never adds or removes authentication: a tunnel or site vhost whose `auth_request` disagrees with its state (a public vhost for a restricted tunnel, say) is logged and left alone until the tunnel or site is reconfigured — the agent-panel vhost, which gains the panel's `auth_request` beside its mTLS check, is the exception. Missing vhosts are logged (a site still waiting for its certificate has none yet); a failed rewrite restores the previous file and the others still run.
 
-A tunnel vhost left as it was fails closed: Gatekeeper refuses its `/authz/check` subrequests, so the tunnel answers 403 until it is rewritten. A static site or auth portal vhost left as it was still names the client's `Host` to Authelia. After an upgrade, check the panel's startup log for `Left tunnel vhosts as they are`, `Left site vhosts as they are` and `Failed to rewrite … vhost`, fix what they name (a failing `nginx -t`, a missing certificate) and restart `lamalibre-lamaste-serverd`.
+A tunnel vhost left as it was fails closed: Gatekeeper refuses its `/authz/check` subrequests, so the tunnel answers 403 until it is rewritten. A static site or auth portal vhost left as it was still names the client's `Host` to Authelia. A vhost left as it was also keeps nginx's combined access log, queries included (`logsQueries` in that log line). After an upgrade, check the panel's startup log for `Left tunnel vhosts as they are`, `Left site vhosts as they are` and `Failed to rewrite … vhost`, and the notification naming vhosts without the relay's access log; fix what they name (a failing `nginx -t`, a missing certificate) and restart `lamalibre-lamaste-serverd`.
 
 ## Key Files
 
