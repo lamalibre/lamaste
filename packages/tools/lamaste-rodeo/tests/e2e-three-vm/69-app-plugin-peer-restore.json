@@ -439,7 +439,7 @@
         },
         {
           "id": "step-36",
-          "label": "The provider restored, its restore step run as ${PROVIDER_USER}",
+          "label": "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -454,7 +454,7 @@
                 "kind": "literal",
                 "value": "RESTORED"
               },
-              "message": "The provider restored, its restore step run as ${PROVIDER_USER}"
+              "message": "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections"
             }
           }
         },
@@ -675,7 +675,7 @@
           }
         }
       ],
-      "bash": "log_section \"Restored and the stream renewed: the gap stream_changed\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nOUT=$(provider_backup)\nSTREAM_B=$(json_get \"$OUT\" '.state.streamId')\nprovider_publish 2 z > /dev/null\nif wait_for 60 has_tag z-2; then\n  log_pass \"The consumer read z-1 and z-2, written after the second backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the second restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its restore step run as ${PROVIDER_USER}\" || true\nRENEWED=$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\nSTREAM_C=$(json_get \"$RENEWED\" '.renewed.streamId // empty')\nassert_not_eq \"${STREAM_C}\" \"\" \"renewPeerOutboxStream answered a new stream (${RENEWED})\" || true\nassert_not_eq \"${STREAM_C}\" \"${STREAM_B}\" \"…not the backup's\" || true\nprovider_back \"Restored and renewed\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_C}\" \"The running outbox serves the renewed stream\" || true\nprovider_publish 3 w > /dev/null\nEVENTS_BEFORE=$(events_tags)\nconsumer_back \"After the second restore\"\nif wait_for 90 gaps_are \"initial,stream_changed\"; then\n  log_pass \"The consumer's next pull was answered the gap stream_changed (onGap ran)\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The gap reconciled: a cursor again, no gap pending\"\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nassert_eq \"$(cursor_stream)\" \"${STREAM_C}\" \"The consumer's cursor is on the renewed stream\" || true\nassert_eq \"$(events_tags)\" \"${EVENTS_BEFORE}\" \"None of w-1..w-3 crossed as events — the reconcile covers them\" || true\nprovider_publish 1 v > /dev/null\nif wait_for 60 has_tag v-1; then\n  log_pass \"It reads on, on the new stream: v-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 3. A cursor ahead of the restored head\n# ==========================================================================="
+      "bash": "log_section \"Restored and the stream renewed: the gap stream_changed\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nOUT=$(provider_backup)\nSTREAM_B=$(json_get \"$OUT\" '.state.streamId')\nprovider_publish 2 z > /dev/null\nif wait_for 60 has_tag z-2; then\n  log_pass \"The consumer read z-1 and z-2, written after the second backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the second restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections\" || true\nRENEWED=$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\nSTREAM_C=$(json_get \"$RENEWED\" '.renewed.streamId // empty')\nassert_not_eq \"${STREAM_C}\" \"\" \"renewPeerOutboxStream answered a new stream (${RENEWED})\" || true\nassert_not_eq \"${STREAM_C}\" \"${STREAM_B}\" \"…not the backup's\" || true\nprovider_back \"Restored and renewed\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_C}\" \"The running outbox serves the renewed stream\" || true\nprovider_publish 3 w > /dev/null\nEVENTS_BEFORE=$(events_tags)\nconsumer_back \"After the second restore\"\nif wait_for 90 gaps_are \"initial,stream_changed\"; then\n  log_pass \"The consumer's next pull was answered the gap stream_changed (onGap ran)\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The gap reconciled: a cursor again, no gap pending\"\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nassert_eq \"$(cursor_stream)\" \"${STREAM_C}\" \"The consumer's cursor is on the renewed stream\" || true\nassert_eq \"$(events_tags)\" \"${EVENTS_BEFORE}\" \"None of w-1..w-3 crossed as events — the reconcile covers them\" || true\nprovider_publish 1 v > /dev/null\nif wait_for 60 has_tag v-1; then\n  log_pass \"It reads on, on the new stream: v-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 3. A cursor ahead of the restored head\n# ==========================================================================="
     },
     {
       "id": "restored-and-renewed-nothing-written-since-the-cursor-ahead-of-the-head",
@@ -828,12 +828,216 @@
           }
         }
       ],
-      "bash": "log_section \"Restored and renewed, nothing written since: the cursor ahead of the head\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nprovider_backup > /dev/null\nprovider_publish 2 u > /dev/null\nif wait_for 60 has_tag u-2; then\n  log_pass \"The consumer read u-1 and u-2, written after the third backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the third restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored and renewed again\" || true\nSTREAM_D=$(json_get \"$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\" '.renewed.streamId // empty')\nprovider_back \"Restored a third time\"\nconsumer_back \"After the third restore\"\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed\"; then\n  log_pass \"Its cursor past the restored head: stream_changed again, not a stalled pull\"\nelse\n  log_fail \"Gaps: $(gap_reasons); cursor $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  assert_eq \"$(cursor_stream)\" \"${STREAM_D}\" \"The consumer's cursor is on the third stream\" || true\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nprovider_publish 1 t > /dev/null\nif wait_for 60 has_tag t-1; then\n  log_pass \"It reads on: t-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi"
+      "bash": "log_section \"Restored and renewed, nothing written since: the cursor ahead of the head\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nprovider_backup > /dev/null\nprovider_publish 2 u > /dev/null\nif wait_for 60 has_tag u-2; then\n  log_pass \"The consumer read u-1 and u-2, written after the third backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the third restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored and renewed again\" || true\nSTREAM_D=$(json_get \"$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\" '.renewed.streamId // empty')\nprovider_back \"Restored a third time\"\nconsumer_back \"After the third restore\"\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed\"; then\n  log_pass \"Its cursor past the restored head: stream_changed again, not a stalled pull\"\nelse\n  log_fail \"Gaps: $(gap_reasons); cursor $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  assert_eq \"$(cursor_stream)\" \"${STREAM_D}\" \"The consumer's cursor is on the third stream\" || true\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nprovider_publish 1 t > /dev/null\nif wait_for 60 has_tag t-1; then\n  log_pass \"It reads on: t-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 4. Without renewal, the cursor ahead and the floor above the restored head\n# ==========================================================================="
+    },
+    {
+      "id": "restored-without-renewal-a-gap-after-the-backup-one-stream-changed-no-loop",
+      "label": "Restored without renewal, a gap after the backup: one stream_changed, no loop",
+      "steps": [
+        {
+          "id": "step-76",
+          "label": "The consumer read s-1 and s-2, written after the fourth backup",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer read s-1 and s-2, written after the fourth backup"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-79",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "The shelf applied again: a new grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The shelf applied again: a new grant"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "A 'granted' gap at the head after the backup: the relay's floor is above it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "A 'granted' gap at the head after the backup: the relay's floor is above it"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Gaps: $(gap_reasons)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons)"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "restore_provider keep"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "The provider restored, its stream kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "RESTORED"
+              },
+              "message": "The provider restored, its stream kept"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Its cursor past the restored head: stream_changed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Its cursor past the restored head: stream_changed"
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Gaps: $(gap_reasons)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons)"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Sleep 20s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 20
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Twenty seconds on, no further gap: the floor followed the head down",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gap_reasons)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "initial,stream_changed,stream_changed,granted,stream_changed"
+              },
+              "message": "Twenty seconds on, no further gap: the floor followed the head down"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "It reads on from the restored head: r-1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "It reads on from the restored head: r-1"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        }
+      ],
+      "bash": "log_section \"Restored without renewal, a gap after the backup: one stream_changed, no loop\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nprovider_backup > /dev/null\nprovider_publish 2 s > /dev/null\nif wait_for 60 has_tag s-2; then\n  log_pass \"The consumer read s-1 and s-2, written after the fourth backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n# The grant renewed: a gap whose floor is the head after s-2, above the backup.\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf applied again: a new grant\" || true\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed,granted\" && wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"A 'granted' gap at the head after the backup: the relay's floor is above it\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nconsumer_away \"Before the fourth restore\"\nOUT=$(restore_provider keep)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its stream kept\" || true\nprovider_back \"Restored a fourth time\"\nconsumer_back \"After the fourth restore\"\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed,granted,stream_changed\"; then\n  log_pass \"Its cursor past the restored head: stream_changed\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nsleep 20\nassert_eq \"$(gap_reasons)\" \"initial,stream_changed,stream_changed,granted,stream_changed\" \"Twenty seconds on, no further gap: the floor followed the head down\" || true\nprovider_publish 1 r > /dev/null\nif wait_for 60 has_tag r-1; then\n  log_pass \"It reads on from the restored head: r-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 69 — A provider restored from a backup renews its event stream (Three-VM)\n# ============================================================================\n# 4.14.2. The provider e2e-pdir (agent VM) is restored from a backup of its\n# database while the consumer e2e-pcons (visitor VM's second agent) is away.\n# A restored outbox reissues the `seq` values it had given out after the\n# backup, under the stream id it had then. The restore is done as a\n# plugin's runbook would: the agent half stopped (its socket and service),\n# the backup copied over data.db, and — where the spec says so — the\n# plugin's restore step, renewPeerOutboxStream on data.db, run as the\n# plugin's own account; then the half started again.\n#\n# 1. Without renewal (the case renewStream closes): the consumer read two\n#    events past the backup; the restored provider writes three new ones,\n#    so its head passes the consumer's cursor under the same stream. The\n#    consumer continues from reissued seq values: it never sees the first\n#    two and is told nothing.\n# 2. With renewal, the same restore: the consumer's next pull is answered\n#    the gap `stream_changed` at the head — none of the restored history\n#    crosses as events — and it reads on, on the new stream.\n# 3. With renewal and nothing written since the restore, the consumer's\n#    cursor ahead of the restored head: `stream_changed` too, not a stalled\n#    pull (the relay reads a provider's answer for a cursor past its head\n#    as the head since 4.14.2).\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-69\"\nREMOTE_DIR=\"/var/tmp/e2e-69-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nCONSUMER_UNITS=\"lamalibre-app-${CONSUMER}.socket lamalibre-app-${CONSUMER}.service\"\nPROVIDER_UNITS=\"lamalibre-app-${PROVIDER}.socket lamalibre-app-${PROVIDER}.service\"\nPROVIDER_USER=\"lamaste-app-${PROVIDER}\"\nPROVIDER_DATA=\"/var/lib/lamalibre/apps/${PROVIDER}\"\n\nbegin_test \"69 — A provider restored from a backup renews its event stream (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl start ${CONSUMER_UNITS} > /dev/null 2>&1; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl start ${PROVIDER_UNITS} > /dev/null 2>&1; rm -f ${PROVIDER_DATA}/e2e-backup.db; true\" > /dev/null 2>&1\n  peers_cleanup\n}\ntrap cleanup EXIT\n\nevents_tags() { consumer_state | jq -r '[.events[]? | \"\\(.tag)-\\(.n)\"] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngap_reasons() { consumer_state | jq -r '[.gaps[]?.reason] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngaps_are() { [ \"$(gap_reasons)\" = \"$1\" ]; }\nhas_tag() { events_tags | tr ',' '\\n' | grep -qx \"$1\"; }\nhealth_of() { hosting_field \"$1\" '.hosting.health.state'; }\nis_up() { [ \"$(health_of \"$1\")\" = \"up\" ]; }\nis_down() { [ \"$(health_of \"$1\")\" = \"down\" ]; }\nstream_of_provider() { json_get \"$(provider_outbox)\" '.state.streamId'; }\ncursor_stream() { json_get \"$(consumer_cursor \"${SCOPE_READ}\")\" '.stream_id'; }\n\n# consumer_away — the consumer's agent half stopped; waits for the relay to see it down\nconsumer_away() {\n  visitor_exec \"systemctl stop ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_down \"${CONSUMER}\"; then\n    log_pass \"$1: ${CONSUMER} stopped, the relay sees it down\"\n  else\n    log_fail \"$1: health of ${CONSUMER} $(hosting_field \"${CONSUMER}\" '.hosting.health')\"\n  fi\n}\n\n# consumer_back — started again: up and its channel attached\nconsumer_back() {\n  visitor_exec \"systemctl start ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_up \"${CONSUMER}\" && wait_for 60 consumer_connected; then\n    log_pass \"$1: ${CONSUMER} back, its channel attached\"\n  else\n    log_fail \"$1: health $(health_of \"${CONSUMER}\"), $(consumer_state | jq -c '{connected}')\"\n  fi\n}\n\n# restore_provider <renew|keep> — the provider's half stopped, the backup\n# copied over data.db (its WAL dropped: the backup is the whole database),\n# the restore step run as the plugin's account when <renew>, the half\n# started. Prints the restore step's output (its JSON line) and RESTORED.\nrestore_provider() {\n  timed_exec 180 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"\n    set -e\n    systemctl stop ${PROVIDER_UNITS}\n    cd ${PROVIDER_DATA}\n    install -o ${PROVIDER_USER} -g ${PROVIDER_USER} -m 0600 e2e-backup.db data.db.restoring\n    rm -f data.db-wal data.db-shm\n    mv data.db.restoring data.db\n    if [ '$1' = renew ]; then\n      start=\\$(systemctl cat lamalibre-app-${PROVIDER}.service | sed -n 's/^ExecStart=//p' | head -n 1)\n      runuser -u ${PROVIDER_USER} -- env LAMASTE_APP_DATA_DIR=${PROVIDER_DATA} \\$start --renew-peer-stream\n    fi\n    systemctl start ${PROVIDER_UNITS}\n    echo RESTORED\" 2>&1 || true\n}\n\n# provider_back — the provider's half answers health checks again\nprovider_back() {\n  if wait_for 120 is_up \"${PROVIDER}\"; then\n    log_pass \"$1: ${PROVIDER} up again\"\n  else\n    log_fail \"$1: health of ${PROVIDER} $(hosting_field \"${PROVIDER}\" '.hosting.health')\"\n  fi\n}\n",
+  "headerRaw": "# ============================================================================\n# 69 — A provider restored from a backup renews its event stream (Three-VM)\n# ============================================================================\n# 4.14.2. The provider e2e-pdir (agent VM) is restored from a backup of its\n# database while the consumer e2e-pcons (visitor VM's second agent) is away.\n# A restored outbox reissues the `seq` values it had given out after the\n# backup, under the stream id it had then. The restore is done as a\n# plugin's runbook would: the agent half stopped (its socket and service),\n# the backup copied over data.db by the plugin's own account, and — where\n# the spec says so — the plugin's restore step, renewPeerOutboxStream on\n# data.db, run as that account under the unit's protections; then the half\n# started again.\n#\n# 1. Without renewal (the case renewStream closes): the consumer read two\n#    events past the backup; the restored provider writes three new ones,\n#    so its head passes the consumer's cursor under the same stream. The\n#    consumer continues from reissued seq values: it never sees the first\n#    two and is told nothing.\n# 2. With renewal, the same restore: the consumer's next pull is answered\n#    the gap `stream_changed` at the head — none of the restored history\n#    crosses as events — and it reads on, on the new stream.\n# 3. With renewal and nothing written since the restore, the consumer's\n#    cursor ahead of the restored head: `stream_changed` too, not a stalled\n#    pull (the relay reads a provider's answer for a cursor past its head\n#    as the head since 4.14.2).\n# 4. Without renewal, the cursor ahead of the restored head and the relay's\n#    floor above it (a gap after the backup): one `stream_changed`, the\n#    floor following the head down, and events again — not a gap after\n#    every pull.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-69\"\nREMOTE_DIR=\"/var/tmp/e2e-69-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nCONSUMER_UNITS=\"lamalibre-app-${CONSUMER}.socket lamalibre-app-${CONSUMER}.service\"\nPROVIDER_UNITS=\"lamalibre-app-${PROVIDER}.socket lamalibre-app-${PROVIDER}.service\"\nPROVIDER_USER=\"lamaste-app-${PROVIDER}\"\nPROVIDER_DATA=\"/var/lib/lamalibre/apps/${PROVIDER}\"\n\nbegin_test \"69 — A provider restored from a backup renews its event stream (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl start ${CONSUMER_UNITS} > /dev/null 2>&1; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl start ${PROVIDER_UNITS} > /dev/null 2>&1; rm -f ${PROVIDER_DATA}/e2e-backup.db; true\" > /dev/null 2>&1\n  peers_cleanup\n}\ntrap cleanup EXIT\n\nevents_tags() { consumer_state | jq -r '[.events[]? | \"\\(.tag)-\\(.n)\"] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngap_reasons() { consumer_state | jq -r '[.gaps[]?.reason] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngaps_are() { [ \"$(gap_reasons)\" = \"$1\" ]; }\nhas_tag() { events_tags | tr ',' '\\n' | grep -qx \"$1\"; }\nhealth_of() { hosting_field \"$1\" '.hosting.health.state'; }\nis_up() { [ \"$(health_of \"$1\")\" = \"up\" ]; }\nis_down() { [ \"$(health_of \"$1\")\" = \"down\" ]; }\nstream_of_provider() { json_get \"$(provider_outbox)\" '.state.streamId'; }\ncursor_stream() { json_get \"$(consumer_cursor \"${SCOPE_READ}\")\" '.stream_id'; }\n\n# consumer_away — the consumer's agent half stopped; waits for the relay to see it down\nconsumer_away() {\n  visitor_exec \"systemctl stop ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_down \"${CONSUMER}\"; then\n    log_pass \"$1: ${CONSUMER} stopped, the relay sees it down\"\n  else\n    log_fail \"$1: health of ${CONSUMER} $(hosting_field \"${CONSUMER}\" '.hosting.health')\"\n  fi\n}\n\n# consumer_back — started again: up and its channel attached\nconsumer_back() {\n  visitor_exec \"systemctl start ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_up \"${CONSUMER}\" && wait_for 60 consumer_connected; then\n    log_pass \"$1: ${CONSUMER} back, its channel attached\"\n  else\n    log_fail \"$1: health $(health_of \"${CONSUMER}\"), $(consumer_state | jq -c '{connected}')\"\n  fi\n}\n\n# restore_provider <renew|keep> — the provider's half stopped; the backup\n# copied over data.db and its WAL dropped (the backup is the whole\n# database) by the plugin's own account — root never acts on a path that\n# account controls; with <renew>, the restore step run as that account\n# under the unit's own protections (systemd-run: no network, the data\n# directory the only writable path); the half started. Prints the restore\n# step's output (its JSON line) and RESTORED.\nrestore_provider() {\n  timed_exec 180 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"\n    set -e\n    systemctl stop ${PROVIDER_UNITS}\n    runuser -u ${PROVIDER_USER} -- sh -c 'cd ${PROVIDER_DATA} && cp -- e2e-backup.db data.db.restoring && rm -f data.db-wal data.db-shm && mv -f data.db.restoring data.db'\n    if [ '$1' = renew ]; then\n      argv=\\$(systemctl show -p ExecStart --value lamalibre-app-${PROVIDER}.service | sed -n 's/.*argv\\[\\]=\\([^;]*\\) ;.*/\\1/p')\n      systemd-run --wait --pipe --collect --quiet \\\\\n        -p User=${PROVIDER_USER} -p Group=${PROVIDER_USER} -p WorkingDirectory=${PROVIDER_DATA} \\\\\n        -p NoNewPrivileges=yes -p ProtectSystem=strict -p ReadWritePaths=${PROVIDER_DATA} \\\\\n        -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes -p PrivateNetwork=yes -p MemoryMax=256M \\\\\n        -E LAMASTE_APP_DATA_DIR=${PROVIDER_DATA} -E NODE_ENV=production \\\\\n        \\$argv --renew-peer-stream\n    fi\n    systemctl start ${PROVIDER_UNITS}\n    echo RESTORED\" 2>&1 || true\n}\n\n# provider_back — the provider's half answers health checks again\nprovider_back() {\n  if wait_for 120 is_up \"${PROVIDER}\"; then\n    log_pass \"$1: ${PROVIDER} up again\"\n  else\n    log_fail \"$1: health of ${PROVIDER} $(hosting_field \"${PROVIDER}\" '.hosting.health')\"\n  fi\n}\n",
   "cleanupRaw": "",
   "trailerRaw": "end_test\n"
 }

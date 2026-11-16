@@ -161,8 +161,8 @@ test('renewing the stream: a new id, the horizon at the head, events kept', asyn
       ],
     );
     assert.equal(outbox.publish({ scope: 'notices:send', type: 'notice.sent', key: 'c' }), 3);
-    // Retention keeps raising the horizon past the renewal's.
-    assert.equal(outbox.state().horizon, 2);
+    // A new event moves the head, not the renewal's horizon.
+    assert.deepEqual(outbox.state(), { streamId: renewed.streamId, head: 3, horizon: 2 });
   });
 });
 
@@ -267,4 +267,27 @@ test('a pull from past the head (a restored database) answers `to` at the head, 
     assert.equal(answer.to, 1);
     assert.deepEqual(answer.events, []);
   });
+});
+
+test("renewing while another connection holds the write lock: SQLite's busy error, not the nesting one", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'lamaste-outbox-'));
+  const dbPath = path.join(dir, 'app.db');
+  const db = new DatabaseSync(dbPath);
+  const outbox = await createPeerOutbox({ db, dbPath, peers: PEERS });
+  const other = new DatabaseSync(dbPath);
+  try {
+    const before = outbox.state();
+    other.exec('BEGIN IMMEDIATE');
+    assert.throws(
+      () => renewPeerOutboxStream(db),
+      (err) => /locked|busy/i.test(err.message) && !/outside the application/.test(err.message),
+    );
+    other.exec('ROLLBACK');
+    assert.deepEqual(outbox.state(), before);
+  } finally {
+    other.close();
+    outbox.close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

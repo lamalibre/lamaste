@@ -730,11 +730,12 @@ export function createPeers(opts: PeersOptions): Peers {
     });
   }
 
-  async function pullOnce(scope: string): Promise<number> {
+  /** One step of a scope's loop: a pending gap reconciled, a gap answered, or the events applied. */
+  async function pullOnce(scope: string): Promise<'reconciled' | 'gap' | 'events'> {
     const row = cursorRow(scope);
     if (row && row.gap_reason !== null) {
       await resolveGap(scope, row);
-      return 0;
+      return 'reconciled';
     }
     const response = await call(scope, 'POST', PEER_CHANNEL_EVENTS_PATH, {
       json: {
@@ -760,23 +761,39 @@ export function createPeers(opts: PeersOptions): Peers {
     if ('gap' in answer) {
       recordGap(scope, answer.gap);
       logger?.info({ scope, reason: answer.gap.reason }, 'An events gap: reconciling');
-      return 0;
+      return 'gap';
     }
-    if (!row) return 0;
-    applyEvents(scope, row, answer);
-    return answer.events.length;
+    if (row) applyEvents(scope, row, answer);
+    return 'events';
   }
 
   async function loop(scope: string): Promise<void> {
     let delay = PEER_REATTACH_MIN_MS;
+    // Gaps answered with no events pull between them: a provider whose
+    // stream keeps changing, or one restored again and again. Each costs a
+    // reconcile through the provider's endpoints, so they back off as
+    // failures do.
+    let gapsInARow = 0;
+    let gapDelay = PEER_REATTACH_MIN_MS;
     while (!closed) {
       if (!session) {
         const s = await sessionReady();
         if (!s) continue;
       }
       try {
-        await pullOnce(scope);
+        const outcome = await pullOnce(scope);
         delay = PEER_REATTACH_MIN_MS;
+        if (outcome === 'events') {
+          gapsInARow = 0;
+          gapDelay = PEER_REATTACH_MIN_MS;
+        } else if (outcome === 'gap') {
+          gapsInARow += 1;
+          if (gapsInARow > 1) {
+            logger?.warn({ scope, gapsInARow }, 'Events gaps one after another: backing off');
+            await sleep(gapDelay);
+            gapDelay = Math.min(gapDelay * 2, PEER_REATTACH_MAX_MS);
+          }
+        }
       } catch (err: unknown) {
         const wait =
           err instanceof PeerCallError && err.retryAfter !== null ? err.retryAfter * 1000 : delay;

@@ -185,10 +185,15 @@ export function renewPeerOutboxStream(db: PeerSqlDatabase): PeerOutboxState | nu
   try {
     db.exec('BEGIN IMMEDIATE');
   } catch (err: unknown) {
-    throw new Error(
-      "Renewing the peer stream runs its own transaction: call it outside the application's",
-      { cause: err },
-    );
+    // Inside the application's transaction: say so. Anything else — the
+    // database busy, another process writing — is SQLite's own error.
+    if (err instanceof Error && /within a transaction/i.test(err.message)) {
+      throw new Error(
+        "Renewing the peer stream runs its own transaction: call it outside the application's",
+        { cause: err },
+      );
+    }
+    throw err;
   }
   try {
     const table = db
@@ -271,7 +276,23 @@ export async function createPeerOutbox(opts: PeerOutboxOptions): Promise<PeerOut
 
   let wake: (() => void)[] = [];
 
-  function state(): PeerOutboxState {
+  /**
+   * Run `fn` in one read transaction on the reader: the head, the stream
+   * and the events it reads are of one snapshot — a renewal or a prune
+   * committing in between cannot pair one moment's head with another's
+   * stream or horizon. Synchronous, so nothing else runs on the reader
+   * meanwhile.
+   */
+  function snapshot<T>(fn: () => T): T {
+    r.exec('BEGIN');
+    try {
+      return fn();
+    } finally {
+      r.exec('COMMIT');
+    }
+  }
+
+  function readState(): PeerOutboxState {
     const head = toNumber((readHead.get() as { head: unknown } | undefined)?.head);
     const row = readStream.get() as { stream_id: unknown; horizon: unknown } | undefined;
     if (!row || typeof row.stream_id !== 'string') {
@@ -280,9 +301,16 @@ export async function createPeerOutbox(opts: PeerOutboxOptions): Promise<PeerOut
     return { streamId: row.stream_id, head, horizon: toNumber(row.horizon) };
   }
 
+  function state(): PeerOutboxState {
+    return snapshot(readState);
+  }
+
   function readOnce(request: PeerEventsPullRequest): PeerEventsPullAnswer {
-    // The head first: nothing committed after it is read or skipped.
-    const position = state();
+    return snapshot(() => readAt(request));
+  }
+
+  function readAt(request: PeerEventsPullRequest): PeerEventsPullAnswer {
+    const position = readState();
     if (request.max === 0 || request.after >= position.head) {
       // `to` never passes the head: a cursor past it (a restored database)
       // is the relay's to answer with a gap.

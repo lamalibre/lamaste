@@ -7,9 +7,10 @@
 # A restored outbox reissues the `seq` values it had given out after the
 # backup, under the stream id it had then. The restore is done as a
 # plugin's runbook would: the agent half stopped (its socket and service),
-# the backup copied over data.db, and — where the spec says so — the
-# plugin's restore step, renewPeerOutboxStream on data.db, run as the
-# plugin's own account; then the half started again.
+# the backup copied over data.db by the plugin's own account, and — where
+# the spec says so — the plugin's restore step, renewPeerOutboxStream on
+# data.db, run as that account under the unit's protections; then the half
+# started again.
 #
 # 1. Without renewal (the case renewStream closes): the consumer read two
 #    events past the backup; the restored provider writes three new ones,
@@ -23,6 +24,10 @@
 #    cursor ahead of the restored head: `stream_changed` too, not a stalled
 #    pull (the relay reads a provider's answer for a cursor past its head
 #    as the head since 4.14.2).
+# 4. Without renewal, the cursor ahead of the restored head and the relay's
+#    floor above it (a gap after the backup): one `stream_changed`, the
+#    floor following the head down, and events again — not a gap after
+#    every pull.
 # ============================================================================
 
 set -euo pipefail
@@ -87,21 +92,26 @@ consumer_back() {
   fi
 }
 
-# restore_provider <renew|keep> — the provider's half stopped, the backup
-# copied over data.db (its WAL dropped: the backup is the whole database),
-# the restore step run as the plugin's account when <renew>, the half
-# started. Prints the restore step's output (its JSON line) and RESTORED.
+# restore_provider <renew|keep> — the provider's half stopped; the backup
+# copied over data.db and its WAL dropped (the backup is the whole
+# database) by the plugin's own account — root never acts on a path that
+# account controls; with <renew>, the restore step run as that account
+# under the unit's own protections (systemd-run: no network, the data
+# directory the only writable path); the half started. Prints the restore
+# step's output (its JSON line) and RESTORED.
 restore_provider() {
   timed_exec 180 multipass exec "${AGENT_VM}" -- sudo bash -c "
     set -e
     systemctl stop ${PROVIDER_UNITS}
-    cd ${PROVIDER_DATA}
-    install -o ${PROVIDER_USER} -g ${PROVIDER_USER} -m 0600 e2e-backup.db data.db.restoring
-    rm -f data.db-wal data.db-shm
-    mv data.db.restoring data.db
+    runuser -u ${PROVIDER_USER} -- sh -c 'cd ${PROVIDER_DATA} && cp -- e2e-backup.db data.db.restoring && rm -f data.db-wal data.db-shm && mv -f data.db.restoring data.db'
     if [ '$1' = renew ]; then
-      start=\$(systemctl cat lamalibre-app-${PROVIDER}.service | sed -n 's/^ExecStart=//p' | head -n 1)
-      runuser -u ${PROVIDER_USER} -- env LAMASTE_APP_DATA_DIR=${PROVIDER_DATA} \$start --renew-peer-stream
+      argv=\$(systemctl show -p ExecStart --value lamalibre-app-${PROVIDER}.service | sed -n 's/.*argv\[\]=\([^;]*\) ;.*/\1/p')
+      systemd-run --wait --pipe --collect --quiet \\
+        -p User=${PROVIDER_USER} -p Group=${PROVIDER_USER} -p WorkingDirectory=${PROVIDER_DATA} \\
+        -p NoNewPrivileges=yes -p ProtectSystem=strict -p ReadWritePaths=${PROVIDER_DATA} \\
+        -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes -p PrivateNetwork=yes -p MemoryMax=256M \\
+        -E LAMASTE_APP_DATA_DIR=${PROVIDER_DATA} -E NODE_ENV=production \\
+        \$argv --renew-peer-stream
     fi
     systemctl start ${PROVIDER_UNITS}
     echo RESTORED" 2>&1 || true
@@ -185,7 +195,7 @@ else
 fi
 consumer_away "Before the second restore"
 OUT=$(restore_provider renew)
-assert_contains "$OUT" "RESTORED" "The provider restored, its restore step run as ${PROVIDER_USER}" || true
+assert_contains "$OUT" "RESTORED" "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections" || true
 RENEWED=$(printf '%s\n' "$OUT" | grep '^{"renewed"' | head -n 1)
 STREAM_C=$(json_get "$RENEWED" '.renewed.streamId // empty')
 assert_not_eq "${STREAM_C}" "" "renewPeerOutboxStream answered a new stream (${RENEWED})" || true
@@ -247,6 +257,48 @@ fi
 provider_publish 1 t > /dev/null
 if wait_for 60 has_tag t-1; then
   log_pass "It reads on: t-1"
+else
+  log_fail "Recorded: $(events_tags)"
+fi
+
+# ===========================================================================
+# 4. Without renewal, the cursor ahead and the floor above the restored head
+# ===========================================================================
+
+log_section "Restored without renewal, a gap after the backup: one stream_changed, no loop"
+
+wait_for 60 consumer_cursor_ready "${SCOPE_READ}" > /dev/null || true
+provider_backup > /dev/null
+provider_publish 2 s > /dev/null
+if wait_for 60 has_tag s-2; then
+  log_pass "The consumer read s-1 and s-2, written after the fourth backup"
+else
+  log_fail "Recorded: $(events_tags)"
+fi
+# The grant renewed: a gap whose floor is the head after s-2, above the backup.
+host_api_delete "peers/shelves/${SHELF_ID}" > /dev/null 2>&1 || true
+RESP=$(apply_shelf)
+assert_eq "$(status_of "$RESP")" "200" "The shelf applied again: a new grant" || true
+if wait_for 90 gaps_are "initial,stream_changed,stream_changed,granted" && wait_for 60 consumer_cursor_ready "${SCOPE_READ}"; then
+  log_pass "A 'granted' gap at the head after the backup: the relay's floor is above it"
+else
+  log_fail "Gaps: $(gap_reasons)"
+fi
+consumer_away "Before the fourth restore"
+OUT=$(restore_provider keep)
+assert_contains "$OUT" "RESTORED" "The provider restored, its stream kept" || true
+provider_back "Restored a fourth time"
+consumer_back "After the fourth restore"
+if wait_for 90 gaps_are "initial,stream_changed,stream_changed,granted,stream_changed"; then
+  log_pass "Its cursor past the restored head: stream_changed"
+else
+  log_fail "Gaps: $(gap_reasons)"
+fi
+sleep 20
+assert_eq "$(gap_reasons)" "initial,stream_changed,stream_changed,granted,stream_changed" "Twenty seconds on, no further gap: the floor followed the head down" || true
+provider_publish 1 r > /dev/null
+if wait_for 60 has_tag r-1; then
+  log_pass "It reads on from the restored head: r-1"
 else
   log_fail "Recorded: $(events_tags)"
 fi

@@ -280,10 +280,10 @@ before(async () => {
       const row = floors.get(`${from} ${scope}`);
       return row && row.epoch === epoch && row.streamId === streamId ? row.floor : null;
     },
-    recordEventFloor: (from, scope, epoch, streamId, floor) => {
+    recordEventFloor: (from, scope, epoch, streamId, floor, options) => {
       const key = `${from} ${scope}`;
       const row = floors.get(key);
-      const same = row && row.epoch === epoch && row.streamId === streamId;
+      const same = row && row.epoch === epoch && row.streamId === streamId && !options?.reset;
       floors.set(key, { epoch, streamId, floor: same ? Math.max(row.floor, floor) : floor });
     },
     maxInFlightPerProvider: 3,
@@ -1235,4 +1235,31 @@ test('renewing the stream while the consumer is ahead of the restored head: stre
   const row = await caughtUp();
   assert.equal(row.stream_id, renewed.streamId);
   assert.equal(row.cursor, renewed.head);
+});
+
+test('restored without renewal, the cursor ahead of the head and the floor above it: one stream_changed, then events', async () => {
+  await caughtUp();
+  const backup = provider.outbox.state().head;
+  publish('floor-1');
+  publish('floor-2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'floor-2'), 15_000);
+  // A gap after the backup: its floor (the head then) is above the backup's head.
+  const gapsGrant = consumer.gaps.length;
+  state.epochSeq += 1;
+  await waitFor(() => consumer.gaps.length > gapsGrant, 15_000);
+  await caughtUp();
+  assert.ok(floors.get('leave directory:read').floor > backup, 'the floor is above the backup');
+  const gapsBefore = consumer.gaps.length;
+  await whileConsumerAway(() => restoreProviderTo(backup));
+  await waitFor(() => consumer.gaps.length > gapsBefore, 15_000);
+  assert.equal(consumer.gaps[gapsBefore].reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.cursor, backup);
+  assert.equal(floors.get('leave directory:read').floor, backup, 'the floor followed the head');
+  // Settled: no gap after the one (before the fix the consumer looped, gap after gap).
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(consumer.gaps.length, gapsBefore + 1);
+  publish('after-restore');
+  await waitFor(() => consumer.received.some((e) => e.key === 'after-restore'), 15_000);
+  assert.equal(consumer.gaps.length, gapsBefore + 1);
 });
