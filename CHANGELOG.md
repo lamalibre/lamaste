@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 4.14.1 candidate
+## [4.14.1] - 2026-11-16
 
 Run on rodeo 2026-11-11/12 on fresh VMs, the candidate on a development Feria only (0.5.0, `@example` hosted for spec 62): upgrade `01` from the released 4.14.0 tarballs (byte for byte the hosted release) 117 of 117; three-VM 68 of 68 (3775 assertions; spec 20's old skip; the peers specs 58–61 and the app-plugin regressions 31, 33, 38, 40, 42 among them); single-VM 43 of 43 (2133 assertions; the 5 old one-VM skips; spec 44 new).
 
