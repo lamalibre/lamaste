@@ -55,7 +55,7 @@
  * reconcile renders them.
  */
 
-import { ACCESS_LOG_DIRECTIVE, domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
+import { domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
 import { tunnelHost, vhostTunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
 import {
   LEGACY_AUTH_VHOST,
@@ -78,6 +78,7 @@ import {
   vhostCertDir,
 } from './nginx.js';
 import { authVhostInputs } from './auth-branding.js';
+import { logsWithoutQueries } from './request-privacy-check.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { readSites, readTunnels } from './state.js';
 
@@ -161,9 +162,13 @@ function authenticates(config) {
   return /^\s*auth_request\s/m.test(config);
 }
 
-/** True when `config` lacks the relay's access log: nginx's combined log, queries included, applies. */
+/**
+ * True when `config` lacks the relay's access log in one of its server
+ * blocks: nginx's combined log, queries included, applies there — the rule
+ * the request-privacy check reads the enabled vhosts with.
+ */
 function logsQueries(config) {
-  return !config.includes(ACCESS_LOG_DIRECTIVE);
+  return !logsWithoutQueries(config);
 }
 
 function newResult() {

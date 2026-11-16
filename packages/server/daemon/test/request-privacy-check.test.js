@@ -73,6 +73,12 @@ async function raised() {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/** What the last audit of a degraded guarantee recorded. */
+async function lastDegraded() {
+  const [entry] = await lib.listAudit({ action: 'relay.request-privacy.degraded', limit: 1 });
+  return entry?.details;
+}
+
 test('a vhost logs without queries when each of its server blocks carries the directive', () => {
   const site = nginx.renderStaticSiteVhost(
     {
@@ -117,10 +123,13 @@ test('vhosts that log queries are named; audited and notified once, again when t
   );
   await enable('lamalibre-lamaste-https-default', renderHttpsCatchAllVhost());
   assert.equal(await lib.checkRequestPrivacy(undefined, { ...paths(), now: t0 }), 'degraded');
-  assert.deepEqual(lib.requestPrivacyStatus().details, {
-    file: 'installed',
-    vhosts: ['lamalibre-lamaste-app-old.example.com'],
-  });
+  const details = await lastDegraded();
+  assert.equal(details.file, 'installed');
+  assert.deepEqual(details.vhosts, ['lamalibre-lamaste-app-old.example.com']);
+  // The stats route (open to agent certificates with system:read) gets the
+  // status alone — never the vhosts, which name the relay's hostnames.
+  assert.deepEqual(Object.keys(lib.requestPrivacyStatus()).sort(), ['checkedAt', 'status']);
+  assert.equal(lib.requestPrivacyStatus().status, 'degraded');
   let notes = await raised();
   assert.equal(notes.length, 1);
   assert.equal(notes[0].level, 'warning');
@@ -160,13 +169,16 @@ test('vhosts that log queries are named; audited and notified once, again when t
 test("the installer's file missing or changed is raised", async () => {
   await rm(file);
   assert.equal(await lib.checkRequestPrivacy(undefined, paths()), 'degraded');
-  assert.equal(lib.requestPrivacyStatus().details.file, 'missing');
-  assert.match((await raised())[0].message, /request-privacy\.conf is missing/);
+  assert.equal((await lastDegraded()).file, 'missing');
+  assert.match((await raised())[0].message, /request-privacy\.conf is missing: nginx refuses/);
 
   lib.resetRequestPrivacyCheck();
   await writeFile(file, renderRequestPrivacyConf().replace('"-"', '"$http_referer"'));
   assert.equal(await lib.checkRequestPrivacy(undefined, paths()), 'degraded');
-  assert.equal(lib.requestPrivacyStatus().details.file, 'changed');
+  assert.equal((await lastDegraded()).file, 'changed');
+  const changed = (await raised()).find((n) => n.message.includes('differs from'));
+  assert.match(changed.message, /edited by hand, or left by another release/);
+  assert.doesNotMatch(changed.message, /nginx refuses/);
 });
 
 test('a dangling link is named as unreadable', async () => {
@@ -175,7 +187,30 @@ test('a dangling link is named as unreadable', async () => {
     path.join(sitesEnabled, 'lamalibre-lamaste-gone'),
   );
   assert.equal(await lib.checkRequestPrivacy(undefined, paths()), 'degraded');
-  assert.deepEqual(lib.requestPrivacyStatus().details.vhosts, [
-    'lamalibre-lamaste-gone (unreadable)',
-  ]);
+  assert.deepEqual((await lastDegraded()).vhosts, ['lamalibre-lamaste-gone (unreadable)']);
+});
+
+test('a restart while still degraded tells nobody again; a change or the reminder does', async () => {
+  await enable(
+    'lamalibre-lamaste-app-stale.example.com',
+    withoutAccessLog(
+      nginx.renderTunnelVhost('restricted', 'stale.example.com', 'example.com', 9401).config,
+    ),
+  );
+  const t0 = Date.now();
+  await lib.checkRequestPrivacy(undefined, { ...paths(), now: t0 });
+  assert.equal((await raised()).length, 1);
+  // The panel restarts (memory gone): the same thing still wrong.
+  lib.resetRequestPrivacyCheck();
+  await lib.checkRequestPrivacy(undefined, { ...paths(), now: t0 + 1000 });
+  assert.equal((await raised()).length, 1, 'not told twice for one breakage');
+  // A day after the audit: the reminder is due, restart or not.
+  lib.resetRequestPrivacyCheck();
+  await lib.checkRequestPrivacy(undefined, { ...paths(), now: t0 + DAY + 1000 });
+  assert.equal((await raised()).length, 2);
+  // Restarted again, and something else is wrong now: told at once.
+  lib.resetRequestPrivacyCheck();
+  await rm(file);
+  await lib.checkRequestPrivacy(undefined, { ...paths(), now: t0 + DAY + 2000 });
+  assert.equal((await raised()).length, 3);
 });

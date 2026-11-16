@@ -99,11 +99,23 @@ export function httpsCatchAllStatus() {
   return { status, checkedAt };
 }
 
+let running = null;
+
+/** One check at a time: a slow read is never overlapped by the next tick. */
+function checkOnce(logger) {
+  if (!running) {
+    running = checkHttpsCatchAll(logger).finally(() => {
+      running = null;
+    });
+  }
+  return running;
+}
+
 /** Check at start and every {@link CHECK_INTERVAL_MS}. Idempotent. */
 export function startHttpsCatchAllCheck(logger) {
   if (timer) return;
-  void checkHttpsCatchAll(logger);
-  timer = setInterval(() => void checkHttpsCatchAll(logger), CHECK_INTERVAL_MS);
+  void checkOnce(logger);
+  timer = setInterval(() => void checkOnce(logger), CHECK_INTERVAL_MS);
   timer.unref();
 }
 

@@ -29,11 +29,11 @@ import {
 } from '../lib/node-version.js';
 import { assertNginxSubModule } from '../lib/nginx-modules.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
+import { GATEKEEPER_SERVICE, checkGatekeeper, startGatekeeper } from '../lib/gatekeeper-service.js';
 import { deployServerdPackage } from './panel.js';
 import { lamalibreNpmEnv, lamalibreRegistry } from '../lib/registry.js';
 import { autheliaReady } from '@lamalibre/lamaste/server';
 
-const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
 const GATEKEEPER_UNIT = `/etc/systemd/system/${GATEKEEPER_SERVICE}.service`;
 
 async function isActive(service) {
@@ -43,23 +43,6 @@ async function isActive(service) {
   } catch {
     return false;
   }
-}
-
-/**
- * Throw, with the unit's last log lines, unless Gatekeeper is active a
- * moment after its start (systemctl returns once the process is spawned).
- */
-async function assertGatekeeperActive() {
-  for (let i = 0; i < 10; i += 1) {
-    if (await isActive(GATEKEEPER_SERVICE)) return;
-    await sleep(500);
-  }
-  const { stdout: logs } = await execa(
-    'journalctl',
-    ['-u', GATEKEEPER_SERVICE, '-n', '20', '--no-pager'],
-    { reject: false },
-  );
-  throw new Error(`Gatekeeper is not running after the redeploy:\n${logs}`);
 }
 
 /**
@@ -500,16 +483,14 @@ export function redeployTasks(ctx, task) {
         // relay whose Gatekeeper is installed but stopped answers those with
         // errors: no state of the relay wants it down. (The guard copied
         // Authelia's, which is not running before onboarding; Gatekeeper is
-        // enabled and started by every fresh install.) A relay that predates
-        // Gatekeeper has no unit and is left as it is.
-        if (ctx.gatekeeperDeployed && existsSync(GATEKEEPER_UNIT)) {
+        // enabled and started by every fresh install.) Best effort and before
+        // the panel, which talks to it: nothing here may keep the panel from
+        // starting — the last step checks and reports (lib/gatekeeper-service.js).
+        // A masked unit is left alone; a relay that predates Gatekeeper has
+        // no unit and is left as it is.
+        if ((ctx.gatekeeperDeployed || ctx.gatekeeperWasActive) && existsSync(GATEKEEPER_UNIT)) {
           subtask.output = 'Starting gatekeeper...';
-          await execa('systemctl', ['enable', GATEKEEPER_SERVICE]);
-          await execa('systemctl', ['restart', GATEKEEPER_SERVICE]);
-          await assertGatekeeperActive();
-        } else if (ctx.gatekeeperWasActive) {
-          subtask.output = 'Starting gatekeeper...';
-          await execa('systemctl', ['start', GATEKEEPER_SERVICE]);
+          ctx.gatekeeperStart = await startGatekeeper();
         }
 
         subtask.output = 'Starting lamalibre-lamaste-serverd...';
@@ -564,6 +545,19 @@ export function redeployTasks(ctx, task) {
         // coreutils rm: does not follow symlinks the old (lamaste-owned) tree holds.
         await removeTree(ctx.previousInstallDir);
         subtask.output = `Removed ${ctx.previousInstallDir}`;
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Checking gatekeeper',
+      skip: () => (ctx.gatekeeperStart ? false : 'Gatekeeper not installed by this redeploy'),
+      task: async (_ctx, subtask) => {
+        // Last, with the panel serving: a Gatekeeper that is masked, will not
+        // start or does not answer its health check fails this step — the
+        // redeploy ends with that error — and nothing else.
+        const report = await checkGatekeeper(ctx.gatekeeperStart);
+        if (!report.ok) throw new Error(report.message);
+        subtask.output = report.warning ? `${report.message}. ${report.warning}` : report.message;
       },
       rendererOptions: { persistentOutput: true },
     },

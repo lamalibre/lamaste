@@ -6,8 +6,16 @@
  * every {@link REMIND_INTERVAL_MS} while it lasts, and again at once when
  * what is wrong changes; its return is audited. Shared by the HTTPS
  * catch-all (`lib/https-catch-all.js`) and the request-privacy check
- * (`lib/request-privacy.js`).
+ * (`lib/request-privacy-check.js`).
+ *
+ * What was told survives a restart: each audit of a broken guarantee
+ * carries `noticeKey` (a digest of the status and what was wrong), so the
+ * first check after a start — a Panel Update restarts the panel — that
+ * finds the very same thing still wrong, with no return audited since,
+ * stays quiet until the reminder is due from that audit's time.
  */
+
+import crypto from 'node:crypto';
 
 import { listAudit, recordAuditBestEffort } from './audit.js';
 import { notifyAdminsBestEffort } from './notifications.js';
@@ -34,6 +42,23 @@ export function createRelayNotice(spec) {
   let notifiedAt = 0;
   /** @type {string | null} */
   let notifiedKey = null;
+
+  /**
+   * The last audited breakage still standing — no return audited after it
+   * — as `{ noticeKey, at }`, or null.
+   */
+  async function lastStandingAudit(logger) {
+    try {
+      const [missing] = await listAudit({ action: missingAction, limit: 1 });
+      if (!missing) return null;
+      const [restored] = await listAudit({ action: restoredAction, limit: 1 });
+      if (restored && restored.id > missing.id) return null;
+      return { noticeKey: missing.details?.noticeKey ?? null, at: Date.parse(missing.at) };
+    } catch (err) {
+      logger?.warn({ err: err?.message }, 'Could not read the audit log');
+      return null;
+    }
+  }
 
   /**
    * Whether the guarantee was last recorded as broken: known in memory after
@@ -79,13 +104,29 @@ export function createRelayNotice(spec) {
         }
         return;
       }
-      const key = JSON.stringify({ status, details });
+      const key = crypto
+        .createHash('sha256')
+        .update(JSON.stringify({ status, details }))
+        .digest('hex')
+        .slice(0, 32);
+      if (before === null && notifiedKey === null) {
+        // The first check since a start: told already, before the restart?
+        const standing = await lastStandingAudit(logger);
+        if (standing && standing.noticeKey === key && Number.isFinite(standing.at)) {
+          notifiedKey = key;
+          notifiedAt = standing.at;
+        }
+      }
       if (key === notifiedKey && now - notifiedAt < REMIND_INTERVAL_MS) return;
       notifiedAt = now;
       notifiedKey = key;
       logger?.warn({ ...spec.logFields, status, ...details }, logMessage);
       await recordAuditBestEffort(
-        { actor: 'lamaste', action: missingAction, details: { status, ...details } },
+        {
+          actor: 'lamaste',
+          action: missingAction,
+          details: { status, ...details, noticeKey: key },
+        },
         logger,
       );
       await notifyAdminsBestEffort(

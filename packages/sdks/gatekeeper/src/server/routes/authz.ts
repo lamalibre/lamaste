@@ -256,11 +256,22 @@ export async function authzRoutes(
   fastify: FastifyInstance,
   opts: AuthzRoutesOptions = {},
 ): Promise<void> {
+  // No `x-ratelimit-*` on any answer: the sign-in redirect reaches the
+  // browser as it is, and no client needs the counters. A refusal (429)
+  // still says when to come back (`retry-after`). The plugin replaces, not
+  // merges, a route's header settings, so every header is named.
+  const noCounterHeaders = {
+    'x-ratelimit-limit': false,
+    'x-ratelimit-remaining': false,
+    'x-ratelimit-reset': false,
+  };
   const authzRateLimit = {
     rateLimit: {
       max: opts.rateLimitPerClient ?? AUTHZ_RATE_LIMIT_PER_CLIENT,
       timeWindow: '1 minute',
       keyGenerator: authzRateLimitKey,
+      addHeadersOnExceeding: noCounterHeaders,
+      addHeaders: { ...noCounterHeaders, 'retry-after': true },
     },
   };
 

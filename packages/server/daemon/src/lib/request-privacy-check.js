@@ -106,10 +106,13 @@ export async function readRequestPrivacy({
   return { file: fileStatus, vhosts };
 }
 
+/** What a file not as this release writes it means — each case its own words. */
 const FILE_WHY = {
-  missing: 'is missing',
-  changed: 'differs from what this release writes',
-  unreadable: 'could not be read',
+  missing:
+    'is missing: nginx refuses every vhost that names its log format or variable, so creating or changing a tunnel or site fails and the panel keeps the vhosts it had.',
+  changed:
+    'differs from what this release writes (edited by hand, or left by another release): what nginx logs and tells Authelia about a request is whatever it now says, not the path without its query.',
+  unreadable: 'could not be read by the panel, so it cannot tell what nginx logs.',
 };
 
 const notice = createRelayNotice({
@@ -121,9 +124,7 @@ const notice = createRelayNotice({
   message: (_status, { file, vhosts }) => {
     const parts = [];
     if (file !== 'installed') {
-      parts.push(
-        `${REQUEST_PRIVACY_FILE} ${FILE_WHY[file]}: nginx refuses every vhost that logs without queries, so changes to tunnels and sites fail and the panel keeps older vhosts.`,
-      );
+      parts.push(`${REQUEST_PRIVACY_FILE} ${FILE_WHY[file]}`);
     }
     if (vhosts.length > 0) {
       parts.push(
@@ -152,18 +153,36 @@ export async function checkRequestPrivacy(logger, options = {}) {
   return status;
 }
 
-/** What `GET /api/system/stats` carries: the last status, what was wrong, when it was read. */
+/**
+ * What `GET /api/system/stats` carries: the last status and when it was
+ * read — never what was wrong. That route admits agent certificates with
+ * `system:read` (every user-access enrolment holds it), and vhost names are
+ * the relay's hostnames: administrators get them in the notification and
+ * the audit log.
+ */
 export function requestPrivacyStatus() {
-  return notice.current();
+  const { status, checkedAt } = notice.current();
+  return { status, checkedAt };
 }
 
 let timer = null;
+let running = null;
+
+/** One check at a time: a slow read is never overlapped by the next tick. */
+function checkOnce(logger) {
+  if (!running) {
+    running = checkRequestPrivacy(logger).finally(() => {
+      running = null;
+    });
+  }
+  return running;
+}
 
 /** Check now and every {@link CHECK_INTERVAL_MS}. Idempotent. */
 export function startRequestPrivacyCheck(logger) {
   if (timer) return;
-  void checkRequestPrivacy(logger);
-  timer = setInterval(() => void checkRequestPrivacy(logger), CHECK_INTERVAL_MS);
+  void checkOnce(logger);
+  timer = setInterval(() => void checkOnce(logger), CHECK_INTERVAL_MS);
   timer.unref();
 }
 
