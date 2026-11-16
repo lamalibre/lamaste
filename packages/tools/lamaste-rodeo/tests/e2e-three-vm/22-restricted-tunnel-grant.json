@@ -1938,21 +1938,147 @@
               },
               "substring": {
                 "kind": "expr",
-                "template": "rd=https://${TUNNEL_FQDN}/index.html"
+                "template": "rd=https%3A%2F%2F${TUNNEL_FQDN}%2Findex.html"
               },
               "message": "Login redirect returns to ${TUNNEL_FQDN}, not the Host header"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 8b: Another tunnel's Host header does not open this tunnel\"\n# ---------------------------------------------------------------------------\n# nginx selects the vhost from an absolute-form request line\n# (`GET https://<this tunnel>/ HTTP/1.1`), but $http_host is the client's Host\n# header. Vhosts that named $http_host to Gatekeeper let a user allowed on one\n# tunnel into any other: the request line named this tunnel, Host the one\n# Gatekeeper authorized. A vhost now names its tunnel in the subrequest path\n# (/authz/tunnel/<fqdn>) and in X-Original-URL and Host; Gatekeeper refuses\n# the old /authz/check, so a vhost written the old way closes its tunnel until\n# the panel rewrites it — which it does when it starts.\n\n# Prints the response body, then `HTTP_STATUS=<code> LOCATION=<url>`.\nprobe() {\n  # $1 = curl cookie args (may be empty), $2 = extra curl args (may be empty)\n  visitor_exec \"curl -sk --max-time 15 $1 $2 -w '\\nHTTP_STATUS=%{http_code} LOCATION=%{redirect_url}' https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"HTTP_STATUS=000\"\n}\nWITH_AUTHED_HOST=\"--request-target 'https://${TUNNEL_FQDN}/index.html' -H 'Host: ${AUTHED_FQDN}'\"\nTESTUSER_COOKIES=\"-b /tmp/restricted-testuser-cookies.txt\"\nOUTSIDER_COOKIES=\"-b /tmp/restricted-outsider-cookies.txt\"\n\nif [ -z \"$OUTSIDER_READY\" ] || [ -z \"$AUTHED_TUNNEL_ID\" ] || [ \"$AUTHED_TUNNEL_ID\" = \"null\" ]; then\n  log_skip \"Outsider session or second tunnel missing — skipping the Host header checks\"\nelse\n  # A vhost as written before the fix: /authz/check, X-Original-URL and Host\n  # from $http_host.\n  host_exec \"sed -i -e 's|proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};|proxy_pass http://127.0.0.1:9294/authz/check;|' -e 's|X-Original-URL https://${TUNNEL_FQDN}\\$request_uri;|X-Original-URL \\$scheme://\\$http_host\\$request_uri;|' -e 's|proxy_set_header Host ${TUNNEL_FQDN};|proxy_set_header Host \\$http_host;|' ${TUNNEL_VHOST} && nginx -t 2>/dev/null && systemctl reload nginx\" >/dev/null 2>&1 || true\n  OLD_VHOST=$(host_exec \"cat ${TUNNEL_VHOST}\" 2>/dev/null || echo \"\")\n  assert_contains \"$OLD_VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/check;\" \\\n    \"Restricted tunnel vhost set back to the old form\" || true\n  sleep 1\n\n  # Gatekeeper refuses the old vhost's subrequest: closed, even to the grantee.\n  OLD_GRANTEE=$(probe \"$TESTUSER_COOKIES\" \"\")\n  assert_contains \"$OLD_GRANTEE\" \"HTTP_STATUS=403\" \\\n    \"A vhost written the old way closes its tunnel (grantee gets 403)\" || true\n  OLD_OUTSIDER=$(probe \"$OUTSIDER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_not_contains \"$OLD_OUTSIDER\" \"$MARKER\" \\\n    \"Old vhost: the outsider does not get in with Host ${AUTHED_FQDN}\" || true\n\n  # The panel rewrites the vhost at startup.\n  host_exec \"systemctl restart lamalibre-lamaste-serverd\" >/dev/null 2>&1 || true\n  for _ in $(seq 1 30); do\n    if host_exec \"grep -qF 'proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};' ${TUNNEL_VHOST}\" >/dev/null 2>&1; then\n      break\n    fi\n    sleep 2\n  done\n  NEW_VHOST=$(host_exec \"cat ${TUNNEL_VHOST}\" 2>/dev/null || echo \"\")\n  assert_contains \"$NEW_VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};\" \\\n    \"Panel startup rewrote the vhost: the subrequest path names ${TUNNEL_FQDN}\" || true\n  assert_contains \"$NEW_VHOST\" \"proxy_set_header X-Original-URL https://${TUNNEL_FQDN}\\$request_uri;\" \\\n    \"Panel startup rewrote the vhost: X-Original-URL names ${TUNNEL_FQDN}\" || true\n  assert_contains \"$NEW_VHOST\" \"proxy_set_header Host ${TUNNEL_FQDN};\" \\\n    \"Panel startup rewrote the vhost: Host names ${TUNNEL_FQDN}\" || true\n  assert_not_contains \"$NEW_VHOST\" \"\\$http_host\" \\\n    \"The rewritten vhost names no client Host header\" || true\n  sleep 1\n\n  NEW_GRANTEE=$(probe \"$TESTUSER_COOKIES\" \"\")\n  assert_contains \"$NEW_GRANTEE\" \"$MARKER\" \"Rewritten vhost: the grantee gets in again\" || true\n\n  # Control: the probe reaches this tunnel and is authorized as this tunnel —\n  # the grantee gets in with another tunnel's Host too.\n  CONTROL=$(probe \"$TESTUSER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$CONTROL\" \"$MARKER\" \\\n    \"Control: the grantee's request line for ${TUNNEL_FQDN} with Host ${AUTHED_FQDN} is served\" || true\n\n  PROBE_NEW=$(probe \"$OUTSIDER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$PROBE_NEW\" \"HTTP_STATUS=403\" \\\n    \"Outsider with Host ${AUTHED_FQDN} is denied this tunnel (403)\" || true\n  assert_not_contains \"$PROBE_NEW\" \"$MARKER\" \\\n    \"Outsider with another tunnel's Host does not see tunnel content\" || true\n\n  # Without a session the login redirect returns to this tunnel, not the Host sent.\n  PROBE_ANON=$(probe \"\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$PROBE_ANON\" \"HTTP_STATUS=302\" \"Anonymous request is sent to the login portal\" || true\n  assert_contains \"$PROBE_ANON\" \"rd=https://${TUNNEL_FQDN}/index.html\" \\\n    \"Login redirect returns to ${TUNNEL_FQDN}, not the Host header\" || true\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 8b: Another tunnel's Host header does not open this tunnel\"\n# ---------------------------------------------------------------------------\n# nginx selects the vhost from an absolute-form request line\n# (`GET https://<this tunnel>/ HTTP/1.1`), but $http_host is the client's Host\n# header. Vhosts that named $http_host to Gatekeeper let a user allowed on one\n# tunnel into any other: the request line named this tunnel, Host the one\n# Gatekeeper authorized. A vhost now names its tunnel in the subrequest path\n# (/authz/tunnel/<fqdn>) and in X-Original-URL and Host; Gatekeeper refuses\n# the old /authz/check, so a vhost written the old way closes its tunnel until\n# the panel rewrites it — which it does when it starts.\n\n# Prints the response body, then `HTTP_STATUS=<code> LOCATION=<url>`.\nprobe() {\n  # $1 = curl cookie args (may be empty), $2 = extra curl args (may be empty)\n  visitor_exec \"curl -sk --max-time 15 $1 $2 -w '\\nHTTP_STATUS=%{http_code} LOCATION=%{redirect_url}' https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"HTTP_STATUS=000\"\n}\nWITH_AUTHED_HOST=\"--request-target 'https://${TUNNEL_FQDN}/index.html' -H 'Host: ${AUTHED_FQDN}'\"\nTESTUSER_COOKIES=\"-b /tmp/restricted-testuser-cookies.txt\"\nOUTSIDER_COOKIES=\"-b /tmp/restricted-outsider-cookies.txt\"\n\nif [ -z \"$OUTSIDER_READY\" ] || [ -z \"$AUTHED_TUNNEL_ID\" ] || [ \"$AUTHED_TUNNEL_ID\" = \"null\" ]; then\n  log_skip \"Outsider session or second tunnel missing — skipping the Host header checks\"\nelse\n  # A vhost as written before the fix: /authz/check, X-Original-URL and Host\n  # from $http_host.\n  host_exec \"sed -i -e 's|proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};|proxy_pass http://127.0.0.1:9294/authz/check;|' -e 's|X-Original-URL https://${TUNNEL_FQDN}\\$request_uri;|X-Original-URL \\$scheme://\\$http_host\\$request_uri;|' -e 's|proxy_set_header Host ${TUNNEL_FQDN};|proxy_set_header Host \\$http_host;|' ${TUNNEL_VHOST} && nginx -t 2>/dev/null && systemctl reload nginx\" >/dev/null 2>&1 || true\n  OLD_VHOST=$(host_exec \"cat ${TUNNEL_VHOST}\" 2>/dev/null || echo \"\")\n  assert_contains \"$OLD_VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/check;\" \\\n    \"Restricted tunnel vhost set back to the old form\" || true\n  sleep 1\n\n  # Gatekeeper refuses the old vhost's subrequest: closed, even to the grantee.\n  OLD_GRANTEE=$(probe \"$TESTUSER_COOKIES\" \"\")\n  assert_contains \"$OLD_GRANTEE\" \"HTTP_STATUS=403\" \\\n    \"A vhost written the old way closes its tunnel (grantee gets 403)\" || true\n  OLD_OUTSIDER=$(probe \"$OUTSIDER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_not_contains \"$OLD_OUTSIDER\" \"$MARKER\" \\\n    \"Old vhost: the outsider does not get in with Host ${AUTHED_FQDN}\" || true\n\n  # The panel rewrites the vhost at startup.\n  host_exec \"systemctl restart lamalibre-lamaste-serverd\" >/dev/null 2>&1 || true\n  for _ in $(seq 1 30); do\n    if host_exec \"grep -qF 'proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};' ${TUNNEL_VHOST}\" >/dev/null 2>&1; then\n      break\n    fi\n    sleep 2\n  done\n  NEW_VHOST=$(host_exec \"cat ${TUNNEL_VHOST}\" 2>/dev/null || echo \"\")\n  assert_contains \"$NEW_VHOST\" \"proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};\" \\\n    \"Panel startup rewrote the vhost: the subrequest path names ${TUNNEL_FQDN}\" || true\n  assert_contains \"$NEW_VHOST\" \"proxy_set_header X-Original-URL https://${TUNNEL_FQDN}\\$request_uri;\" \\\n    \"Panel startup rewrote the vhost: X-Original-URL names ${TUNNEL_FQDN}\" || true\n  assert_contains \"$NEW_VHOST\" \"proxy_set_header Host ${TUNNEL_FQDN};\" \\\n    \"Panel startup rewrote the vhost: Host names ${TUNNEL_FQDN}\" || true\n  assert_not_contains \"$NEW_VHOST\" \"\\$http_host\" \\\n    \"The rewritten vhost names no client Host header\" || true\n  sleep 1\n\n  NEW_GRANTEE=$(probe \"$TESTUSER_COOKIES\" \"\")\n  assert_contains \"$NEW_GRANTEE\" \"$MARKER\" \"Rewritten vhost: the grantee gets in again\" || true\n\n  # Control: the probe reaches this tunnel and is authorized as this tunnel —\n  # the grantee gets in with another tunnel's Host too.\n  CONTROL=$(probe \"$TESTUSER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$CONTROL\" \"$MARKER\" \\\n    \"Control: the grantee's request line for ${TUNNEL_FQDN} with Host ${AUTHED_FQDN} is served\" || true\n\n  PROBE_NEW=$(probe \"$OUTSIDER_COOKIES\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$PROBE_NEW\" \"HTTP_STATUS=403\" \\\n    \"Outsider with Host ${AUTHED_FQDN} is denied this tunnel (403)\" || true\n  assert_not_contains \"$PROBE_NEW\" \"$MARKER\" \\\n    \"Outsider with another tunnel's Host does not see tunnel content\" || true\n\n  # Without a session the login redirect returns to this tunnel, not the Host sent.\n  PROBE_ANON=$(probe \"\" \"$WITH_AUTHED_HOST\")\n  assert_contains \"$PROBE_ANON\" \"HTTP_STATUS=302\" \"Anonymous request is sent to the login portal\" || true\n  assert_contains \"$PROBE_ANON\" \"rd=https%3A%2F%2F${TUNNEL_FQDN}%2Findex.html\" \\\n    \"Login redirect returns to ${TUNNEL_FQDN}, not the Host header\" || true\nfi"
+    },
+    {
+      "id": "step-8c-the-sign-in-redirect-returns-to-the-whole-url-query-and-all",
+      "label": "Step 8c: The sign-in redirect returns to the whole URL, query and all",
+      "steps": [
+        {
+          "id": "step-113",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "",
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "QUERY_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "",
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "QUERY_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "An anonymous request with a query is sent to the sign-in (302)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "QUERY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "302"
+              },
+              "message": "An anonymous request with a query is sent to the sign-in (302)"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "…at the portal of the tunnel's domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "QUERY_LOCATION"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://auth.${TEST_DOMAIN}/?rd="
+              },
+              "message": "…at the portal of the tunnel's domain"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "Set QUERY_RD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%b' \"${QUERY_RD_ENCODED//%/\\\\x}\""
+          },
+          "capture": [
+            {
+              "variable": "QUERY_RD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-120",
+          "label": "rd, decoded once, is the whole URL with both parameters",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "QUERY_RD"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "QUERY_URL"
+              },
+              "message": "rd, decoded once, is the whole URL with both parameters"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 8c: The sign-in redirect returns to the whole URL, query and all\"\n# ---------------------------------------------------------------------------\n# Gatekeeper's sign-in redirect encodes the original URL as one rd: a second\n# query parameter is no longer cut off at its `&`.\nQUERY_URL=\"https://${TUNNEL_FQDN}/index.html?a=1&b=2\"\nQUERY_LOCATION=$(visitor_exec \"curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 '${QUERY_URL}' 2>/dev/null\" || echo \"\")\nQUERY_STATUS=$(visitor_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 15 '${QUERY_URL}' 2>/dev/null\" || echo \"000\")\nassert_eq \"$QUERY_STATUS\" \"302\" \"An anonymous request with a query is sent to the sign-in (302)\" || true\nassert_contains \"$QUERY_LOCATION\" \"https://auth.${TEST_DOMAIN}/?rd=\" \"…at the portal of the tunnel's domain\" || true\nQUERY_RD_ENCODED=\"${QUERY_LOCATION#*rd=}\"\nQUERY_RD_ENCODED=\"${QUERY_RD_ENCODED%%&*}\"\nQUERY_RD=$(printf '%b' \"${QUERY_RD_ENCODED//%/\\\\x}\")\nassert_eq \"$QUERY_RD\" \"$QUERY_URL\" \"rd, decoded once, is the whole URL with both parameters\" || true"
     },
     {
       "id": "step-9-revoke-testuser-s-grant-previously-allowed-user-403",
       "label": "Step 9: Revoke testuser's grant → previously-allowed user 403",
       "steps": [
         {
-          "id": "step-114",
+          "id": "step-123",
           "label": "Sleep 12s",
           "target": "local",
           "op": {
@@ -1961,7 +2087,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-124",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1985,7 +2111,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-125",
           "label": "Revoked grant blocks the previously-allowed user (403)",
           "target": "local",
           "continueOnError": true,
@@ -2006,7 +2132,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-126",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -2029,7 +2155,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-127",
           "label": "Previously-allowed user still receives tunnel content after revoke",
           "target": "local",
           "op": {
@@ -2039,7 +2165,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-128",
           "label": "Previously-allowed user no longer receives tunnel content",
           "target": "local",
           "op": {

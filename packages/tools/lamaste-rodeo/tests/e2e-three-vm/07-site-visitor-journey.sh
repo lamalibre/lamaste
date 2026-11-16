@@ -9,10 +9,11 @@
 # 2. Write a test index.html to the site directory
 # 3. Visit site from visitor VM without auth — should redirect to Authelia (302)
 #    — with a query holding `&`: the sign-in redirect's `rd`, decoded once, is
-#    the whole URL; nginx's access log keeps the path and no query, Authelia's
-#    log no query
+#    the whole URL; nginx's access log keeps the path and no query
 # 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)
 # 5. Visit site from visitor VM with auth — should return site content (200)
+#    — and a second site, for another user only, refuses that session: Authelia
+#    logs the refusal with the path and without the query
 # 6. Disable Authelia protection via PATCH
 # 7. Visit site from visitor VM without auth — should now return content (200)
 # 8. Re-enable Authelia protection via PATCH
@@ -76,6 +77,12 @@ ALIAS_SITE_ID=""
 ALIAS_MARKER="E2E_ALIAS_SITE_OK_${RUN_ID}"
 ALIAS_DNSMASQ_CONF="/etc/dnsmasq.d/lamaste-e2e-07-aliases.conf"
 
+# A second protected site, restricted to a user who does not exist: Authelia
+# refuses the signed-in test user there, and logs the refusal
+CLOSED_NAME="e2eclosed${RUN_ID}"
+CLOSED_FQDN="${CLOSED_NAME}.${TEST_DOMAIN}"
+CLOSED_ID=""
+
 begin_test "07 — Static Site Visitor Journey (Three-VM)"
 
 # ---------------------------------------------------------------------------
@@ -89,6 +96,10 @@ cleanup() {
   if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
     host_api_delete "sites/${SITE_ID}" 2>/dev/null || true
   fi
+  if [ -n "$CLOSED_ID" ] && [ "$CLOSED_ID" != "null" ]; then
+    host_api_delete "sites/${CLOSED_ID}" > /dev/null 2>&1 || true
+  fi
+  visitor_exec "sed -i '/${CLOSED_FQDN}/d' /etc/hosts 2>/dev/null || true" 2>/dev/null || true
   if [ -n "$ALIAS_SITE_ID" ] && [ "$ALIAS_SITE_ID" != "null" ]; then
     host_api_delete "sites/${ALIAS_SITE_ID}" > /dev/null 2>&1 || true
   fi
@@ -132,6 +143,14 @@ log_info "Created site ID: $SITE_ID (${SITE_FQDN})"
 
 SITE_FQDN_ACTUAL=$(echo "$CREATE_RESPONSE" | jq -r '.site.fqdn' 2>/dev/null || echo "")
 assert_eq "$SITE_FQDN_ACTUAL" "$SITE_FQDN" "Site FQDN matches expected value" || true
+
+# Before anyone signs in: a site rule may restart Authelia, which ends sessions.
+CLOSED_RESPONSE=$(host_api_post "sites" '{"name":"'"${CLOSED_NAME}"'","type":"managed","spaMode":false,"autheliaProtected":true}')
+CLOSED_ID=$(echo "$CLOSED_RESPONSE" | jq -r '.site.id' 2>/dev/null || echo "")
+assert_json_field_not_empty "$CLOSED_RESPONSE" '.site.id' "A second protected site is created" || true
+CLOSED_PATCH=$(host_api_patch "sites/${CLOSED_ID}" '{"allowedUsers":["e2e07nobody'"${RUN_ID}"'"]}')
+assert_json_field "$CLOSED_PATCH" '.ok' 'true' "…restricted to another user only" || true
+visitor_exec "grep -q '${CLOSED_FQDN}' /etc/hosts || echo '${HOST_IP} ${CLOSED_FQDN}' >> /etc/hosts"
 
 # ---------------------------------------------------------------------------
 log_section "Write test index.html to site directory"
@@ -194,8 +213,6 @@ if [ "${PATH_IN_LOG:-0}" -ge 1 ] 2>/dev/null; then
 else
   log_fail "The access log has no line for ${PROBE_PATH} (count: ${PATH_IN_LOG})"
 fi
-PROBE_IN_AUTHELIA=$(host_exec "grep -c '${PROBE}' /var/log/authelia/authelia.log 2>/dev/null || true")
-assert_eq "$PROBE_IN_AUTHELIA" "0" "Authelia's log holds no query either" || true
 
 # ---------------------------------------------------------------------------
 log_section "Reset TOTP before authentication"
@@ -269,6 +286,28 @@ assert_contains "$AUTH_CONTENT" "$MARKER" "Authenticated request returns site co
 
 AUTH_HTTP_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
 assert_eq "$AUTH_HTTP_STATUS" "200" "Authenticated request returns HTTP 200" || true
+
+# ---------------------------------------------------------------------------
+log_section "Authelia refuses the signed-in user — and is never asked about the query"
+# ---------------------------------------------------------------------------
+
+# The second site admits another user only: Authelia refuses this session and
+# logs the URL it was asked about. The path is there; the query is not.
+REFUSED_PROBE="e2erefused${RUN_ID}x${RANDOM}"
+REFUSED_PATH="/e2e-07-refused-${RUN_ID}.html"
+REFUSED_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-site-cookies.txt 'https://${CLOSED_FQDN}${REFUSED_PATH}?probe=${REFUSED_PROBE}&x=1' 2>/dev/null" || echo "000")
+assert_eq "$REFUSED_STATUS" "403" "The signed-in user is refused on a site for another user (403)" || true
+sleep 1
+REFUSAL_LINES=$(host_exec "grep -c '${CLOSED_FQDN}${REFUSED_PATH}' /var/log/authelia/authelia.log 2>/dev/null || true")
+if [ "${REFUSAL_LINES:-0}" -ge 1 ] 2>/dev/null; then
+  log_pass "Authelia logged the refusal, naming the path"
+else
+  log_fail "Authelia's log has no refusal for ${CLOSED_FQDN}${REFUSED_PATH} (count: ${REFUSAL_LINES})"
+fi
+REFUSED_IN_AUTHELIA=$(host_exec "grep -c '${REFUSED_PROBE}' /var/log/authelia/authelia.log 2>/dev/null || true")
+assert_eq "$REFUSED_IN_AUTHELIA" "0" "Authelia's log holds no query: it was asked about the path alone" || true
+REFUSED_IN_NGINX=$(host_exec "grep -c '${REFUSED_PROBE}' /var/log/nginx/access.log || true")
+assert_eq "$REFUSED_IN_NGINX" "0" "Nor does nginx's access log" || true
 
 # ---------------------------------------------------------------------------
 log_section "Disable Authelia protection"

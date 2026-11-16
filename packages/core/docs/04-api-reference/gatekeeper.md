@@ -731,7 +731,7 @@ Where every page that asks for a session sends a request without one (`error_pag
 
 It reads no session, no projection (`domains.json`) and asks nobody; it refuses (`403`) when the path's host is not the domain or under it, when `X-Original-URL` is not an absolute URL whose host (with any port) is the path's host, or `Host` names another one — as every route here — or when the URL does not continue right after the host with nothing, `/` or `?`.
 
-**Gatekeeper must be running** for these redirects, as it must for a tunnel's authorization and a web-surface shell: while it is down, a page without a session gets nginx's `502` instead of the sign-in. `create-lamaste`'s redeploy starts (and enables) Gatekeeper whenever it installs it, whether or not it was running before.
+**Gatekeeper is required for signing in.** The sign-in redirect of protected static sites, of the auth portal's change-password page and `/api/user-access/authorize`, of tunnels and of web-surface shells is this route: while Gatekeeper is down, a page without a session gets nginx's `502` instead of the sign-in (tunnels and shells already need it to authorize). `create-lamaste`'s redeploy starts Gatekeeper whenever it installs it, whether or not it was running before — before the panel, best effort — and its last step proves it ready (`GET /health`): a Gatekeeper that is masked, will not start or does not answer fails that step with a clear message while the panel keeps running; one disabled at boot is started and reported. These answers carry no `x-ratelimit-*` headers (none of the authorization routes do); a `429` keeps `retry-after`.
 
 Authelia's portal receives the whole URL as `rd` and logs it at `debug` only; the relay runs Authelia at `info`.
 
