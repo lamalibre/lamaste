@@ -221,6 +221,22 @@ A provider that itself has an effective outgoing edge receives a delegation for 
 
 An offline consumer or provider simply waits: catching up from the cursor is the normal path.
 
+**A provider restored from a backup renews its stream (4.14.2).** A restored database takes the outbox back to the backup: its stream id and `seq` values are the backup's, so the outbox gives out again the `seq` values it had already given after the backup. A consumer whose cursor is past the restored head is told `stream_changed`. A consumer that was away until new events carried the head past its cursor is not: it continues from `seq` values that now name other events, and never sees the ones in between. So a provider's restore procedure gives its outbox a new stream before the agent half serves events again:
+
+```js
+import { DatabaseSync } from 'node:sqlite';
+import { renewPeerOutboxStream } from '@lamalibre/lamaste/agent';
+
+// The agent half stopped, its database restored: the plugin's restore step.
+const db = new DatabaseSync(path.join(dataDir, 'data.db'));
+renewPeerOutboxStream(db); // → { streamId, head, horizon }, or null: no outbox in this database
+db.close();
+```
+
+A running half can call `outbox.renewStream()` instead; pulls it holds open answer at once. With a new stream id, every consumer's next pull is answered the gap `stream_changed` at the provider's head, whatever its cursor, and `onGap` reconciles through the provider's endpoints. The new stream begins at the head (`horizon` is raised to it); events are neither deleted nor renumbered. Both run in their own `BEGIN IMMEDIATE`: call them outside the application's transaction. Renew after anything that can take the database back: a restore, a copy from another machine, a rollback by snapshot. Renewing when nothing was restored costs the consumers one reconcile, and nothing else.
+
+A consumer **ahead of the head** — its cursor past the provider's head, as after a restore with nothing written since — is answered `stream_changed` at once from relays 4.14.2 on. An outbox answers such a pull with `to` at its head (before 4.14.2 it named the cursor), and the relay reads either answer as the head. A relay from 4.13 to 4.14.1 refuses both (`502 provider_unreachable`), so the consumer retries until the provider's head passes its cursor, and is then told `stream_changed` if the stream was renewed.
+
 ## A consumer's own edges
 
 A consumer's half can learn which of the scopes it consumes are granted to it before it calls (4.14.1), so a plugin that may use one of several providers knows which one it has.

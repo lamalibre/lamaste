@@ -217,7 +217,7 @@ export function parsePeerEventsPullAnswer(
   if (!isRecord(raw)) return null;
   const { streamId, head, horizon, to, events } = raw;
   if (!isPeerStreamId(streamId) || !isSeq(head) || !isSeq(horizon) || !isSeq(to)) return null;
-  if (horizon > head || to > head || !Array.isArray(events)) return null;
+  if (horizon > head || !Array.isArray(events)) return null;
   if (events.length > PEER_EVENTS_PULL_MAX) return null;
   const parsed: PeerEvent[] = [];
   for (const item of events) {
@@ -225,7 +225,14 @@ export function parsePeerEventsPullAnswer(
     if (!event) return null;
     parsed.push(event);
   }
-  if (to < expect.after) return null;
+  // A cursor past the provider's head — its database was restored or
+  // replaced: no events, and `to` is the head (an outbox before 4.14.2 named
+  // the cursor). Read as the head, so the relay answers the gap.
+  if (expect.after > head) {
+    if (parsed.length > 0 || (to !== head && to !== expect.after)) return null;
+    return { streamId, head, horizon, to: head, events: [] };
+  }
+  if (to > head || to < expect.after) return null;
   if (!eventsFit(parsed, expect, to)) return null;
   return { streamId, head, horizon, to, events: parsed };
 }

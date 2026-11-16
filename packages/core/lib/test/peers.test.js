@@ -20,6 +20,7 @@ import {
   normalizePeersBlock,
   onwardPeerDelegation,
   parseCallerIdentity,
+  parsePeerEventsPullAnswer,
   parsePeerEndpointPath,
   peerEndpointAdmitsRoute,
   peerScopeProvider,
@@ -561,4 +562,37 @@ test('onward delegations: the provider holds them, deeper, never outliving the p
   assert.throws(() =>
     signPeerDelegation({ holder: 'a', root: 'a', userId: USER_ID, depth: 4 }, key),
   );
+});
+
+test('a provider pull answer for a cursor past its head (a restored database) reads as the head', () => {
+  const streamId = '3c1d0f7e-2a4b-4c5d-8e6f-7a8b9c0d1e2f';
+  const expect = { scope: 'directory:read', types: ['unit.renamed'], after: 9 };
+  const answer = (fields) => ({ streamId, head: 4, horizon: 0, to: 4, events: [], ...fields });
+  // `to` at the head (4.14.2) or at the cursor (the outbox before it).
+  for (const to of [4, 9]) {
+    assert.deepEqual(parsePeerEventsPullAnswer(answer({ to }), expect), {
+      streamId,
+      head: 4,
+      horizon: 0,
+      to: 4,
+      events: [],
+    });
+  }
+  // Anything else past the head is refused.
+  assert.equal(parsePeerEventsPullAnswer(answer({ to: 7 }), expect), null);
+  assert.equal(parsePeerEventsPullAnswer(answer({ to: 3 }), expect), null);
+  const event = {
+    seq: 4,
+    scope: 'directory:read',
+    type: 'unit.renamed',
+    key: null,
+    data: {},
+    at: '2026-11-16T00:00:00.000Z',
+  };
+  assert.equal(parsePeerEventsPullAnswer(answer({ events: [event] }), expect), null);
+  // A cursor within the head: `to` may not pass the head, nor fall below the cursor.
+  const within = { ...expect, after: 2 };
+  assert.equal(parsePeerEventsPullAnswer(answer({ to: 5 }), within), null);
+  assert.equal(parsePeerEventsPullAnswer(answer({ to: 1 }), within), null);
+  assert.equal(parsePeerEventsPullAnswer(answer({ to: 4 }), within).to, 4);
 });

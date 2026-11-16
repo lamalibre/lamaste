@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 4.14.2 candidate
+
+### Added
+
+- **A provider renews its event stream after a restore.** `renewPeerOutboxStream(db)` (`@lamalibre/lamaste/agent`) and `outbox.renewStream()` give a provider's outbox a new stream id. A restored database (from a backup, a copy, a snapshot rollback) takes the outbox back to the backup's stream id and gives out again the `seq` values it had given after the backup. A consumer that was away until new events carried the head past its cursor then continued from reissued values and never saw the events in between — silently. With a new stream id, every consumer's next pull is answered the gap `stream_changed` at the head, whatever its cursor, and `onGap` reconciles. The new stream begins at the head (`horizon` raised to it); events are neither deleted nor renumbered. `renewPeerOutboxStream` works on a connection with no outbox open, so a restore step can run it while the agent half is stopped; it answers null for a database without an outbox. Both run in their own `BEGIN IMMEDIATE` and refuse to run inside the application's transaction. A pull held open answers at once when the stream changes. Against relays from 4.13 on, a consumer behind the restored head gets the gap with no relay update: the relay's events path already answered another stream id with `stream_changed`.
+
+### Fixed
+
+- **A consumer whose cursor is past the provider's head is answered `stream_changed`, not `502`.** The outbox answered such a pull with `to` at the consumer's cursor, past its own head, and the relay refused any answer with `to` past the head as malformed (`502 provider_unreachable`). The `stream_changed` the relay's events path has for that case was never reached. Such a cursor happens after a provider's database is restored with nothing written since. The outbox now answers `to` at its head, and answers at once instead of holding the pull. The relay reads either answer as the head: a 4.14.2 relay serves a provider half from before it too. On a relay before 4.14.2, the consumer retries until the provider's head passes its cursor.
+
+Tests: core `outbox-retention.test.js` (renewal, a held pull, inside a transaction, a restore script with no outbox open, `to` never past the head), `peer-channel.test.js` (a provider restored while the consumer is away: the silent loss without renewal, `stream_changed` with it, behind and ahead of the head), `peers.test.js` (the relay's reading of an answer for a cursor past the head); three-VM spec 69 (the provider's database restored on its agent while the consumer is away, the restore step run as the plugin's account: without renewal, with renewal behind the head, with renewal ahead of it).
+
 ## [4.14.1] - 2026-11-16
 
 Run on rodeo 2026-11-11/12 on fresh VMs, the candidate on a development Feria only (0.5.0, `@example` hosted for spec 62): upgrade `01` from the released 4.14.0 tarballs (byte for byte the hosted release) 117 of 117; three-VM 68 of 68 (3775 assertions; spec 20's old skip; the peers specs 58–61 and the app-plugin regressions 31, 33, 38, 40, 42 among them); single-VM 43 of 43 (2133 assertions; the 5 old one-VM skips; spec 44 new).

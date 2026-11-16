@@ -1121,3 +1121,118 @@ test('a consumer that no longer qualifies gets no edges after its wait', async (
       .consumes.every((e, i) => e.required !== snapshotBefore.consumes[i].required),
   );
 });
+
+// ---------------------------------------------------------------------------
+// A provider restored from a backup (4.14.2): renewing its stream
+// ---------------------------------------------------------------------------
+
+/** The cursor row of the consumer, once it has caught up and no gap is pending. */
+async function caughtUp() {
+  return waitFor(() => {
+    const row = consumer.db
+      .prepare('SELECT cursor, stream_id, gap_reason FROM lamaste_peer_cursors')
+      .get();
+    return row && row.cursor !== null && row.gap_reason === null ? row : null;
+  }, 15_000);
+}
+
+/**
+ * What a restore does to the provider's outbox: the events written after
+ * the backup are gone, and the sequence is rolled back with them, so the
+ * next events reuse their `seq`. The stream row is the backup's.
+ */
+function restoreProviderTo(backupHead) {
+  provider.db.prepare('DELETE FROM lamaste_peer_outbox WHERE seq > ?').run(backupHead);
+  provider.db
+    .prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'lamaste_peer_outbox'")
+    .run(backupHead);
+}
+
+/** Keep the consumer away (its pulls refused), run `fn`, let it back. */
+async function whileConsumerAway(fn) {
+  state.pullSlotTaken = true;
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    await fn();
+  } finally {
+    state.pullSlotTaken = false;
+  }
+}
+
+test('a restored provider that renews its stream: a consumer away across the restore gets stream_changed', async () => {
+  await caughtUp();
+
+  // Without renewal — the case renewStream() closes. The consumer reads two
+  // events past the backup, is away while the provider is restored and
+  // writes three new ones: the head passes its cursor under the same stream,
+  // so it continues from reissued seq values and sees only the last one.
+  const backupA = provider.outbox.state().head;
+  publish('lost-a1');
+  publish('lost-a2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'lost-a2'), 15_000);
+  const gapsA = consumer.gaps.length;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backupA);
+    publish('restored-a1');
+    publish('restored-a2');
+    publish('restored-a3');
+  });
+  await waitFor(() => consumer.received.some((e) => e.key === 'restored-a3'), 15_000);
+  assert.equal(consumer.gaps.length, gapsA, 'no gap: the loss is silent');
+  assert.equal(
+    consumer.received.some((e) => e.key === 'restored-a1' || e.key === 'restored-a2'),
+    false,
+  );
+
+  // With renewal: the same restore, then renewStream() before the provider
+  // serves events again. The consumer's next pull is answered with the gap
+  // stream_changed at the head and the new stream — the gateway's events
+  // path, unchanged since 4.13, decides it; the relay needs nothing new.
+  await caughtUp();
+  const backupB = provider.outbox.state().head;
+  publish('lost-b1');
+  publish('lost-b2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'lost-b2'), 15_000);
+  const gapsB = consumer.gaps.length;
+  const receivedB = consumer.received.length;
+  let renewed;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backupB);
+    publish('restored-b1');
+    publish('restored-b2');
+    publish('restored-b3');
+    renewed = provider.outbox.renewStream();
+  });
+  await waitFor(() => consumer.gaps.length > gapsB, 15_000);
+  const gap = consumer.gaps[gapsB];
+  assert.equal(gap.reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.stream_id, renewed.streamId);
+  assert.equal(row.cursor, renewed.head);
+  // Nothing of the restored history crossed as events: the gap's
+  // reconcile is how the consumer learns it.
+  assert.equal(consumer.received.length, receivedB);
+
+  // And it reads on, on the new stream.
+  publish('after-renewal');
+  await waitFor(() => consumer.received.some((e) => e.key === 'after-renewal'), 15_000);
+});
+
+test('renewing the stream while the consumer is ahead of the restored head: stream_changed too', async () => {
+  await caughtUp();
+  const backup = provider.outbox.state().head;
+  publish('ahead-1');
+  publish('ahead-2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'ahead-2'), 15_000);
+  const gapsBefore = consumer.gaps.length;
+  let renewed;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backup);
+    renewed = provider.outbox.renewStream();
+  });
+  await waitFor(() => consumer.gaps.length > gapsBefore, 15_000);
+  assert.equal(consumer.gaps[gapsBefore].reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.stream_id, renewed.streamId);
+  assert.equal(row.cursor, renewed.head);
+});

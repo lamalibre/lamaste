@@ -162,7 +162,10 @@ open_agent2_push_install() {
 #     Its outbox (createPeerOutbox, data.db) publishes through
 #     POST /admin/e2e/publish {count, tag} (an admin, through the forwarder),
 #     each event in a transaction of its own; /admin/e2e/peerlog lists the
-#     peer calls that reached a handler.
+#     peer calls that reached a handler; POST /admin/e2e/backup snapshots
+#     data.db (VACUUM INTO e2e-backup.db), GET /admin/e2e/outbox answers the
+#     stream's position, and `agentd.mjs --renew-peer-stream` (the half
+#     stopped) is its restore step — renewPeerOutboxStream on data.db.
 #   consumer (e2e-pcons) consumes e2e-pdir:read (subscribed to unit.changed)
 #     and e2e-pdir:write; createPeers on the relay's channel; its inbox
 #     handler records every event it is given in e2e_events (no uniqueness:
@@ -272,6 +275,7 @@ FIXTURE_EOF
 // E2E peers fixture — one agent half, provider or consumer (__E2E_MODE__),
 // on Fastify and core's peers SDK. Runs under the unit lamaste-apphost
 // writes, listening on systemd's socket (descriptor 3).
+import { rmSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -288,6 +292,7 @@ import {
   createPeers,
   peerRoute,
   peerSurface,
+  renewPeerOutboxStream,
   responderHeaderFor,
 } from '@lamalibre/lamaste/agent';
 import MANIFEST from './lamaste-plugin.json';
@@ -296,6 +301,18 @@ const ROUTE = __E2E_ROUTE__;
 const MODE = __E2E_MODE__;
 const configPath = process.env.LAMASTE_APP_CONFIG;
 const dataDir = process.env.LAMASTE_APP_DATA_DIR;
+// The provider's restore step, run with the agent half stopped (spec 69):
+// `agentd.mjs --renew-peer-stream` gives the restored outbox a new stream.
+if (process.argv[2] === '--renew-peer-stream') {
+  if (!dataDir) {
+    process.stderr.write('LAMASTE_APP_DATA_DIR is not set\n');
+    process.exit(2);
+  }
+  const restored = new DatabaseSync(path.join(dataDir, 'data.db'));
+  process.stdout.write(`${JSON.stringify({ renewed: renewPeerOutboxStream(restored) })}\n`);
+  restored.close();
+  process.exit(0);
+}
 if (!configPath || !dataDir) {
   process.stderr.write('LAMASTE_APP_CONFIG and LAMASTE_APP_DATA_DIR are not set\n');
   process.exit(2);
@@ -444,6 +461,20 @@ if (outbox) {
     log(`published ${count} ${tag}`);
     return signed(reply, verified, 200, { seqs, state: outbox.state() });
   });
+  // A consistent snapshot of data.db (spec 69's backup), restored by hand.
+  app.post('/admin/e2e/backup', async (request, reply) => {
+    const verified = await adminCaller(request, reply);
+    if (!verified) return reply;
+    const target = path.join(dataDir, 'e2e-backup.db');
+    rmSync(target, { force: true });
+    db.prepare('VACUUM INTO ?').run(target);
+    return signed(reply, verified, 200, { state: outbox.state() });
+  });
+  app.get('/admin/e2e/outbox', async (request, reply) => {
+    const verified = await adminCaller(request, reply);
+    if (!verified) return reply;
+    return signed(reply, verified, 200, { state: outbox.state() });
+  });
   app.get('/admin/e2e/peerlog', async (request, reply) => {
     const verified = await adminCaller(request, reply);
     if (!verified) return reply;
@@ -551,6 +582,8 @@ consumer_rawpull() {
   host_api_post "${CONSUMER}/e2e/rawpull" "$(jq -cn --arg s "$1" --argjson a "$2" --arg e "$3" --arg t "$4" '{scope: $s, after: $a, epoch: $e, streamId: $t}')"
 }
 provider_peerlog() { host_api_get "${PROVIDER}/e2e/peerlog"; }
+provider_backup() { host_api_post "${PROVIDER}/e2e/backup" "{}"; }
+provider_outbox() { host_api_get "${PROVIDER}/e2e/outbox"; }
 provider_publish() { host_api_post "${PROVIDER}/e2e/publish" "{\"count\":$1,\"tag\":\"$2\"}"; }
 
 # apply_shelf [scopes json] — PUT /api/peers/shelves/e2e-peers; prints status then body
