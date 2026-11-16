@@ -16,6 +16,9 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  RELAY_HTTPS_LISTEN,
+  RELAY_TLS_DIRECTIVES,
+  renderHttpsCatchAllVhost,
   AUTHELIA_NOSCRIPT_TEXT,
   SITE_UPLOAD_MAX_REQUEST_MIB,
   autheliaIndexLanguageFilters,
@@ -129,6 +132,29 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
     const text = await readFile(path.join(captured, name), 'utf8');
     assert.doesNotThrow(() => validateVhost(text), name);
   }
+});
+
+test("every vhost generator listens and speaks TLS exactly as create-lamaste's 443 catch-all", async () => {
+  // The catch-all (core renderHttpsCatchAllVhost) is the default server of
+  // the socket these vhosts listen on, and the socket's default server sets
+  // every name's TLS protocol floor: a generator that listened elsewhere
+  // ([::]:443, another address) would be that socket's implicit default — a
+  // name no site serves would get its certificate — and one with other TLS
+  // settings would not get them. The whole source is read, so a generator no
+  // other test calls is held to it too.
+  const source = await readFile(new URL('../src/lib/nginx.js', import.meta.url), 'utf8');
+  const lines = source.split('\n').map((line) => line.trim());
+  const listens = lines.filter((line) => /^listen\s/.test(line));
+  assert.ok(listens.length >= 9, `found ${listens.length} listen lines`);
+  for (const line of listens) assert.equal(line, RELAY_HTTPS_LISTEN);
+  for (const [prefix, expected] of RELAY_TLS_DIRECTIVES.map((d) => [d.split(' ')[0], d])) {
+    const found = lines.filter((line) => line.startsWith(`${prefix} `));
+    assert.equal(found.length, listens.length, `${prefix}: one per server block`);
+    for (const line of found) assert.equal(line, expected);
+  }
+  const catchAll = renderHttpsCatchAllVhost();
+  assert.match(catchAll, /listen 443 ssl default_server;/);
+  for (const directive of RELAY_TLS_DIRECTIVES) assert.ok(catchAll.includes(directive), directive);
 });
 
 test('the auth vhost serves the OIDC discovery, JWKS and token endpoints without forward auth', async () => {

@@ -731,6 +731,78 @@ test('a disabled consumer: its edges go pending, its channel closes, nothing cro
   }, 'calls again');
 });
 
+test("a consumer's own edges: read over its channel, following shelves and its providers", async () => {
+  const edgeOf = (route, scope) =>
+    halves[route].peers.edges().consumes.find((e) => e.scope === scope);
+  await waitFor(() => halves.leave.peers.edges().known, 'leave knows its edges');
+  assert.deepEqual(halves.leave.peers.edges().consumes, [
+    {
+      scope: 'dir:read',
+      provider: 'dir',
+      major: 1,
+      required: true,
+      events: ['unit.renamed'],
+      effective: true,
+      reason: null,
+    },
+  ]);
+  // notes consumes dir:read, which no applied shelf grants it.
+  await waitFor(() => halves.notes.peers.edges().known, 'notes knows its edges');
+  assert.equal(edgeOf('notes', 'dir:read').effective, false);
+  assert.equal(edgeOf('notes', 'dir:read').reason, 'not_granted');
+  // Not approved: no list (and no channel to read one on).
+  assert.deepEqual(await lib.edgesOfConsumer('old'), []);
+
+  // A shelf applied: the held read is answered at once, not after its wait.
+  const changes = [];
+  const off = halves.notes.peers.onEdgesChanged((snapshot) => changes.push(snapshot));
+  try {
+    // The half's read is held (it holds up to 25 s; the relay's tick wakes
+    // it every 15 s): the apply itself must answer it.
+    await waitFor(() => !!halves.notes.peers.edges().confirmedAt, 'notes confirmed');
+    const applied = Date.now();
+    await lib.applyPeerShelf(
+      'extra',
+      { 'dir:read': { provider: 'dir', consumers: ['notes'] } },
+      { actor: 'admin', logger },
+    );
+    await waitFor(() => edgeOf('notes', 'dir:read').effective, 'granted', 10_000);
+    assert.ok(Date.now() - applied < 5_000, 'answered by the apply, not by a tick or the wait');
+    assert.ok(changes.length > 0);
+    assert.equal(edgeOf('notes', 'dir:read').reason, null);
+
+    // The provider disabled: the grant stays applied, pending.
+    await lib.disablePlugin('dir', logger);
+    try {
+      await waitFor(
+        () => edgeOf('leave', 'dir:read').reason === 'provider_disabled',
+        'leave sees its provider disabled',
+        10_000,
+      );
+      assert.equal(edgeOf('leave', 'dir:read').effective, false);
+    } finally {
+      await lib.enablePlugin('dir', logger);
+    }
+    await waitFor(() => edgeOf('leave', 'dir:read').effective, 'effective again', 10_000);
+  } finally {
+    await lib.removePeerShelf('extra', { actor: 'admin', logger });
+    off();
+  }
+  await waitFor(
+    () => edgeOf('notes', 'dir:read').reason === 'not_granted',
+    'the shelf removed',
+    10_000,
+  );
+  await waitFor(() => lib.peerChannelStatuses().dir?.state === 'attached', 'dir channel again');
+  await waitFor(async () => {
+    try {
+      return (await halves.leave.peers.json('dir:read', 'GET', '/units/4')).unit === '4';
+    } catch {
+      return false;
+    }
+  }, 'calls again');
+});
+
 test("refusals past a consumer's allowance are answered, not audited; a scope it made up is kept as none", async () => {
   const opts = lib.peerGatewayOptions(logger);
   let noted = 0;

@@ -41,6 +41,13 @@ import type { Duplex, Readable } from 'node:stream';
 
 import { RESPONDER_HEADER, isOriginFormPath } from '../caller-assertion.js';
 import type { PeerCallerIdentity } from '../caller-assertion.js';
+import {
+  PEER_EDGES_ANSWER_MAX_BYTES,
+  PEER_EDGES_WAIT_MAX_MS,
+  PEER_EDGES_WAIT_MIN_MS,
+  parsePeerEdgesAnswer,
+} from '../peer-edges.js';
+import type { PeerEdge, PeerEdgesAnswer } from '../peer-edges.js';
 import { parsePeerEventsChannelAnswer } from '../peer-events.js';
 import type { PeerEvent, PeerEventsGap } from '../peer-events.js';
 import {
@@ -48,6 +55,7 @@ import {
   PEER_ATTACH_WAIT_MS,
   PEER_CALL_TIMEOUT_DEFAULT_MS,
   PEER_CALL_TIMEOUT_MAX_MS,
+  PEER_CHANNEL_EDGES_PATH,
   PEER_CHANNEL_EVENTS_PATH,
   PEER_CHANNEL_PING_INTERVAL_MS,
   PEER_CHANNEL_PING_TIMEOUT_MS,
@@ -149,6 +157,25 @@ export interface PeerGapNotice {
   readonly reason: PeerGapReason;
 }
 
+/**
+ * What the half knows of its own edges (`peers.edges()`): one entry per
+ * scope its approved version consumes.
+ */
+export interface PeerEdgesSnapshot {
+  /** False until the relay has answered once since the half started. */
+  readonly known: boolean;
+  /**
+   * When the relay last confirmed the list (ISO 8601), or null. Advances at
+   * least every `PEER_EDGES_WAIT_MAX_MS` while the channel is up; stops
+   * while it is not (`connected()`), the last list kept.
+   */
+  readonly confirmedAt: string | null;
+  readonly consumes: readonly PeerEdge[];
+}
+
+/** Called with the new snapshot after the list of edges changed (or first became known). */
+export type PeerEdgesListener = (snapshot: PeerEdgesSnapshot) => void;
+
 export interface PeersLogger {
   info(obj: Record<string, unknown>, msg?: string): void;
   warn(obj: Record<string, unknown>, msg?: string): void;
@@ -169,6 +196,8 @@ export interface PeersOptions {
   readonly attachWaitMs?: number | undefined;
   /** How long an events pull waits at the head (default `PEER_EVENTS_WAIT_MAX_MS`). */
   readonly eventsWaitMs?: number | undefined;
+  /** How long the relay holds an edges request (default `PEER_EDGES_WAIT_MAX_MS`). For tests. */
+  readonly edgesWaitMs?: number | undefined;
   /**
    * How often the half PINGs its channel (default
    * `PEER_CHANNEL_PING_INTERVAL_MS`), and how long an unanswered PING may
@@ -198,6 +227,21 @@ export interface Peers {
   ): Promise<T>;
   /** Subscribe: `handler` gets the events of `type` in `scope` (declared in the manifest's consumes). */
   on(scope: string, type: string, handler: PeerEventHandler): void;
+  /**
+   * The half's own edges, as the relay last told it: which of the scopes its
+   * approved version consumes are effective (granted by an applied shelf,
+   * agreed by both approved versions) — not whether the provider is up.
+   * `known` is false until the relay has answered since the half started.
+   * Synchronous; the first use starts the reading.
+   */
+  edges(): PeerEdgesSnapshot;
+  /**
+   * Call `listener` after the list changes — a shelf applied or removed, an
+   * update or approval on either side, a provider installed, removed,
+   * disabled or enabled — and when it first becomes known. Returns an
+   * unsubscribe. The first use starts the reading.
+   */
+  onEdgesChanged(listener: PeerEdgesListener): () => void;
   /** Whether a channel is up. */
   connected(): boolean;
   /** What `GET /admin/peers` reports of the consumer side. */
@@ -273,6 +317,10 @@ export function createPeers(opts: PeersOptions): Peers {
     opts.eventsWaitMs ?? PEER_EVENTS_WAIT_MAX_MS,
     PEER_EVENTS_WAIT_MAX_MS,
   );
+  const edgesWaitMs = Math.min(
+    Math.max(opts.edgesWaitMs ?? PEER_EDGES_WAIT_MAX_MS, PEER_EDGES_WAIT_MIN_MS),
+    PEER_EDGES_WAIT_MAX_MS,
+  );
   const logger = opts.logger;
 
   const pingIntervalMs = opts.pingIntervalMs ?? PEER_CHANNEL_PING_INTERVAL_MS;
@@ -343,6 +391,7 @@ export function createPeers(opts: PeersOptions): Peers {
     const waiting = waiters;
     waiters = [];
     for (const fn of waiting) fn(next);
+    edgesOnNewSession(next);
     // Calls in flight on the previous one finish there — if it is alive:
     // the relay attaches anew both when it replaces a working channel (it
     // sends GOAWAY, and the old one answers) and when it found the old one
@@ -412,13 +461,25 @@ export function createPeers(opts: PeersOptions): Peers {
     return peerContextOf(request)?.hops ?? 0;
   }
 
-  async function call(
+  function call(
     scope: string,
     method: string,
     path: string,
     callOpts: PeerCallOptions = {},
   ): Promise<PeerResponse> {
-    if (!isPeerScope(scope)) throw new PeerCallError('bad_request', `Not a scope: "${scope}"`);
+    if (!isPeerScope(scope)) {
+      return Promise.reject(new PeerCallError('bad_request', `Not a scope: "${scope}"`));
+    }
+    return send(scope, method, path, callOpts);
+  }
+
+  /** A stream on the channel: a call of `scope`, or (null) the relay's own path. */
+  async function send(
+    scope: string | null,
+    method: string,
+    path: string,
+    callOpts: PeerCallOptions = {},
+  ): Promise<PeerResponse> {
     if (!isOriginFormPath(path) || path.includes('?')) {
       throw new PeerCallError('bad_request', 'A path starts with one "/" and carries no query');
     }
@@ -445,7 +506,7 @@ export function createPeers(opts: PeersOptions): Peers {
     }
     headers[':method'] = upper;
     headers[':path'] = target;
-    headers[PEER_SCOPE_HEADER] = scope;
+    if (scope !== null) headers[PEER_SCOPE_HEADER] = scope;
     headers[PEER_HOPS_HEADER] = String(hopsOf(callOpts.onBehalfOf ?? callOpts.from));
     headers[PEER_TIMEOUT_HEADER] = String(timeoutMs);
     if (callOpts.onBehalfOf) {
@@ -736,12 +797,149 @@ export function createPeers(opts: PeersOptions): Peers {
     loops.delete(scope);
   }
 
+  // --- the half's own edges --------------------------------------------------
+
+  let edgesState: PeerEdgesSnapshot & { readonly digest: string | null } = {
+    known: false,
+    confirmedAt: null,
+    consumes: [],
+    digest: null,
+  };
+  /** The channel the list was last confirmed on: a new one reads at once. */
+  let edgesSession: ClientHttp2Session | null = null;
+  const edgesListeners = new Set<PeerEdgesListener>();
+  let edgesWanted = false;
+  let edgesLooping = false;
+  /** The read in flight and its channel: a new channel cancels it, to read there at once. */
+  let edgesInFlight: { readonly on: ClientHttp2Session; readonly abort: AbortController } | null =
+    null;
+
+  /** A new channel: a read held on the previous one is cancelled (it drains up to 25 s there). */
+  function edgesOnNewSession(next: ClientHttp2Session): void {
+    if (edgesInFlight && edgesInFlight.on !== next) edgesInFlight.abort.abort();
+  }
+
+  function edgesSnapshot(): PeerEdgesSnapshot {
+    return {
+      known: edgesState.known,
+      confirmedAt: edgesState.confirmedAt,
+      consumes: edgesState.consumes,
+    };
+  }
+
+  function applyEdges(answer: PeerEdgesAnswer, on: ClientHttp2Session): void {
+    const changed = !edgesState.known || answer.digest !== edgesState.digest;
+    edgesState = {
+      known: true,
+      confirmedAt: new Date().toISOString(),
+      consumes: changed ? answer.consumes : edgesState.consumes,
+      digest: answer.digest,
+    };
+    edgesSession = on;
+    if (!changed) return;
+    const snapshot = edgesSnapshot();
+    for (const listener of [...edgesListeners]) {
+      try {
+        listener(snapshot);
+      } catch (err: unknown) {
+        logger?.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'An edges listener failed',
+        );
+      }
+    }
+  }
+
+  /** One read: at once on a new channel, otherwise held until the list changes. */
+  async function readEdges(s: ClientHttp2Session): Promise<void> {
+    const fresh = edgesSession !== s || !edgesState.known;
+    const abort = new AbortController();
+    edgesInFlight = { on: s, abort };
+    let answer: PeerEdgesAnswer | null;
+    try {
+      const response = await send(null, 'POST', PEER_CHANNEL_EDGES_PATH, {
+        json: { digest: fresh ? null : edgesState.digest, waitMs: fresh ? 0 : edgesWaitMs },
+        timeoutMs: edgesWaitMs + 15_000,
+        signal: abort.signal,
+      });
+      if (response.status !== 200) {
+        response.body.resume();
+        throw new PeerCallError('relay_error', `The edges read answered ${response.status}`, {
+          status: response.status,
+        });
+      }
+      answer = parsePeerEdgesAnswer(await response.json(PEER_EDGES_ANSWER_MAX_BYTES));
+    } catch (err: unknown) {
+      // Cancelled for a newer channel, before or during the answer: read
+      // there at once.
+      if (abort.signal.aborted) return;
+      throw err;
+    } finally {
+      if (edgesInFlight?.abort === abort) edgesInFlight = null;
+    }
+    if (!answer) throw new PeerCallError('relay_error', 'The relay answered malformed edges');
+    applyEdges(answer, s);
+  }
+
+  async function edgesLoop(): Promise<void> {
+    let delay = PEER_REATTACH_MIN_MS;
+    try {
+      while (!closed) {
+        const s = session && !session.closed && !session.destroyed ? session : await sessionReady();
+        if (!s) continue;
+        try {
+          await readEdges(s);
+          delay = PEER_REATTACH_MIN_MS;
+        } catch (err: unknown) {
+          if (err instanceof PeerCallError && err.code === 'bad_path') {
+            // A relay from before 4.14.1: it lists no edges. The next attach
+            // (a relay restarted on a newer version) tries again.
+            logger?.warn({ plugin: opts.plugin }, 'The relay does not list edges');
+            return;
+          }
+          if (!(err instanceof PeerCallError && err.code === 'relay_unavailable')) {
+            logger?.warn(
+              {
+                code:
+                  err instanceof PeerCallError
+                    ? err.code
+                    : err instanceof Error
+                      ? err.name
+                      : 'error',
+              },
+              'An edges read failed',
+            );
+          }
+          const wait =
+            err instanceof PeerCallError && err.retryAfter !== null ? err.retryAfter * 1000 : delay;
+          await sleep(wait);
+          delay = Math.min(delay * 2, PEER_REATTACH_MAX_MS);
+        }
+      }
+    } finally {
+      edgesLooping = false;
+    }
+  }
+
+  function startEdges(): void {
+    if (!edgesWanted || edgesLooping || closed || !session) return;
+    edgesLooping = true;
+    void edgesLoop();
+  }
+
+  function wantEdges(): void {
+    if (edgesWanted) return;
+    edgesWanted = true;
+    startEdges();
+  }
+
   function startLoops(): void {
     for (const scope of handlers.keys()) {
       if (loops.has(scope) || closed) continue;
       loops.add(scope);
       void loop(scope);
     }
+    startEdges();
   }
 
   const peers: Peers = {
@@ -780,6 +978,17 @@ export function createPeers(opts: PeersOptions): Peers {
       }
       byType.set(type, handler);
       if (session) startLoops();
+    },
+    edges() {
+      wantEdges();
+      return edgesSnapshot();
+    },
+    onEdgesChanged(listener) {
+      edgesListeners.add(listener);
+      wantEdges();
+      return () => {
+        edgesListeners.delete(listener);
+      };
     },
     connected() {
       return session !== null && !session.closed && !session.destroyed;

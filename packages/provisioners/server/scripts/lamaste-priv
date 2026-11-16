@@ -329,12 +329,13 @@ const RULES = {
   },
   server: {
     // Port 80 belongs to create-lamaste's HTTPS redirect and to certbot's
-    // HTTP-01 challenges; panel vhosts serve TLS only.
+    // HTTP-01 challenges; panel vhosts serve TLS only. IPv4 only, as
+    // create-lamaste's 443 catch-all listens: a vhost on another socket
+    // ([::]:443) would be that socket's implicit default server — what the
+    // catch-all exists to prevent.
     listen: {
       args: (a) =>
-        a.length >= 1 &&
-        /^(?:\[::\]:)?443$/.test(a[0]) &&
-        a.slice(1).every((f) => f === 'ssl' || f === 'http2'),
+        a.length >= 1 && a[0] === '443' && a.slice(1).every((f) => f === 'ssl' || f === 'http2'),
     },
     server_name: { args: each(HOSTNAME_RE) },
     ssl_certificate: {

@@ -128,17 +128,27 @@ export function invalidatePeers(logger) {
   }
 }
 
-/** The current snapshot of effective edges (computed when stale). */
+/** A computation in flight, and the generation it started at: readers of that generation share it. */
+let computing = null;
+
+/** The current snapshot of effective edges (computed when stale; one computation at a time per generation). */
 export async function peersSnapshot() {
   if (snapshot && Date.now() - snapshotAt < SNAPSHOT_MAX_AGE_MS) return snapshot;
+  if (computing && computing.generation === generation) return computing.promise;
   const started = generation;
-  const computed = await computeSnapshot();
-  // Something changed while it was computed: use it once, keep nothing.
-  if (started === generation) {
-    snapshot = computed;
-    snapshotAt = Date.now();
+  const promise = computeSnapshot();
+  computing = { generation: started, promise };
+  try {
+    const computed = await promise;
+    // Something changed while it was computed: use it once, keep nothing.
+    if (started === generation) {
+      snapshot = computed;
+      snapshotAt = Date.now();
+    }
+    return computed;
+  } finally {
+    if (computing?.promise === promise) computing = null;
   }
-  return computed;
 }
 
 /** Sorted intersection of two lists of event types. */
@@ -278,6 +288,44 @@ export async function effectiveEdgesInto(route) {
     for (const edge of scopes.values()) if (edge.provider === route) out.push(edge);
   }
   return out;
+}
+
+/**
+ * The edges of consumer `route` as its agent half reads them over its
+ * channel (`POST /.lamaste/edges`): one entry per scope its installed,
+ * approved version consumes — effective (with the event types it carries),
+ * or why not: `not_granted` when no applied shelf names it, else the
+ * pending reason of an applied grant. Empty for a plugin that is not
+ * installed, consumes nothing or whose version is not approved.
+ *
+ * @param {string} route
+ * @returns {Promise<Array<{ scope: string, provider: string, major: number, required: boolean, events: string[], effective: boolean, reason: string | null }>>}
+ */
+export async function edgesOfConsumer(route) {
+  const current = await peersSnapshot();
+  const plugin = current.plugins.find((p) => p.route === route);
+  if (!plugin || !plugin.approved) return [];
+  const effective = current.byConsumer.get(route);
+  const pending = new Map();
+  for (const shelf of current.shelves) {
+    for (const edge of shelf.edges) {
+      if (edge.consumer !== route || edge.state === 'effective' || pending.has(edge.scope))
+        continue;
+      pending.set(edge.scope, edge.reason);
+    }
+  }
+  return Object.entries(plugin.consumes ?? {}).map(([scope, consumed]) => {
+    const edge = effective?.get(scope);
+    return {
+      scope,
+      provider: peerScopeProvider(scope),
+      major: consumed.major,
+      required: consumed.required,
+      events: edge ? edge.events : [],
+      effective: !!edge,
+      reason: edge ? null : (pending.get(scope) ?? 'not_granted'),
+    };
+  });
 }
 
 /**

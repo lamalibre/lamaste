@@ -49,6 +49,7 @@ import {
 import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
 import { startIdentityServices, stopIdentityServices } from './lib/identity-sync.js';
 import { startPeerServices, stopPeerServices } from './lib/peer-runtime.js';
+import { startHttpsCatchAllCheck, stopHttpsCatchAllCheck } from './lib/https-catch-all.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import {
@@ -386,6 +387,11 @@ async function start() {
   // and delivered to their agent halves (lib/sign-in-events.js).
   await startSignInEventServices(server.log);
 
+  // --- The port-443 catch-all create-lamaste installs: a relay without it
+  // answers a hostname no site serves with another site's certificate, so
+  // its absence is raised to the administrators — now, then every 10 min ---
+  startHttpsCatchAllCheck(server.log);
+
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {
     checkInstanceLiveness(server.log).catch((err) => {
@@ -400,6 +406,7 @@ async function start() {
     clearInterval(livenessInterval);
     stopIdentityServices();
     stopPeerServices();
+    stopHttpsCatchAllCheck();
     stopHostedPluginHealthMonitor();
     stopMailHealthMonitor();
     await stopSubmissionListener().catch(() => {});

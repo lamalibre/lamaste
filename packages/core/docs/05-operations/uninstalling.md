@@ -287,6 +287,7 @@ For reference, here is a complete list of everything the installer and onboardin
 
 - `/etc/nginx/sites-available/lamalibre-lamaste-panel-ip`
 - `/etc/nginx/sites-available/lamalibre-lamaste-http-redirect`
+- `/etc/nginx/sites-available/lamalibre-lamaste-https-default`
 - `/etc/nginx/sites-available/lamalibre-lamaste-panel-domain`
 - `/etc/nginx/sites-available/lamalibre-lamaste-auth`
 - `/etc/nginx/sites-available/lamalibre-lamaste-tunnel`

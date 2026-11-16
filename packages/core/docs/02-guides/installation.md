@@ -164,6 +164,8 @@ nginx is configured to listen on port 9292 with TLS and mTLS client certificate 
 
 Port 80 gets a catch-all site, `lamalibre-lamaste-http-redirect` (`listen 80 default_server`), that answers every plain-HTTP request with a `301` to `https://$host$request_uri`. It does not get in the way of Let's Encrypt: during an HTTP-01 challenge certbot's nginx plugin clones this default server for the name being validated, answers the challenge, and restores the file afterwards — for new certificates and renewals alike. If another site on the machine already owns port 80's default server, the step is skipped and the relay works without the redirect.
 
+Port 443 gets a catch-all too, `lamalibre-lamaste-https-default` (`listen 443 ssl default_server` with `ssl_reject_handshake on`). A hostname that no site of the relay serves, such as a typo under a wildcard DNS record, fails the TLS handshake instead of receiving another site's certificate. Redeploys and Panel Updates install it on existing relays. From this step on, nginx listens on 443 even before onboarding, refusing every handshake until a site exists. The step is skipped only when another site on the machine owns port 443's default server, and the panel then warns the administrators.
+
 **Phase 6 — Panel deployment**
 
 ```

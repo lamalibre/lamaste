@@ -56,7 +56,9 @@ trap cleanup EXIT
 
 # host_status <hostname> — how nginx answers https://<hostname>/ on this VM
 host_status() {
-  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || echo "000"
+  local code
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || true)
+  echo "${code:-000}"
 }
 
 # link_state <site name> — "available linked" / "available unlinked" / "gone …"
@@ -116,6 +118,10 @@ assert_eq "$(link_state "$(vhost_name auth "${DOMAIN}")")" "available linked" "�
 
 BEFORE="$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")"
 log_info "Before: ${ON_FQDN} ${OFF_FQDN} ${AUTH_FQDN} answer ${BEFORE}"
+# The disabled tunnel's vhost is not linked: no site serves its name, so the
+# HTTPS catch-all (4.14.1) refuses it at the handshake — never another
+# site's certificate and sign-in.
+assert_eq "$(host_status "${OFF_FQDN}")" "000" "${OFF_FQDN} (disabled) is refused at the TLS handshake" || true
 
 # ===========================================================================
 # 2. The vhosts as 4.6 left them

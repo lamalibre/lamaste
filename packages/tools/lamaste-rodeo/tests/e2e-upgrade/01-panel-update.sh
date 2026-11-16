@@ -49,13 +49,18 @@
 #    packages come from"): the candidate's root helper names the registry
 #    for the self-update; npm's caches and logs hold @lamalibre requests to
 #    the development Feria only — none to npmjs or the hosted Feria.
+# 7. Unknown hostnames (4.14.1): the update installs the port-443 catch-all
+#    lamalibre-lamaste-https-default — a name no site serves, under the
+#    relay's domain, fails the TLS handshake (before: answered with another
+#    site's certificate, unless the previous release had it already); the
+#    auth portal and the enabled tunnel still complete theirs.
 # ============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers.sh"
 
-require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3 find
+require_commands curl jq nginx npm sha256sum oathtool python3 node sqlite3 find openssl
 
 begin_test "01 — Panel Update from the previous release to the candidate"
 
@@ -119,7 +124,9 @@ assert_page_runs() {
 
 # host_status <hostname> — how nginx answers https://<hostname>/ on this VM
 host_status() {
-  curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || echo "000"
+  local code
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null || true)
+  echo "${code:-000}"
 }
 
 # link_state <site name> — "available linked" / "available unlinked" / "gone …"
@@ -275,6 +282,17 @@ AUDIT_BASE=$(api_get "audit?limit=1" 2>/dev/null | jq '.entries[0].id // 0' 2>/d
 # 2. The Panel Update
 # ===========================================================================
 
+# What a name no site serves gets before the update (4.14.1's catch-all).
+UNKNOWN_NAME="unknown-${RANDOM}${RANDOM}.${DOMAIN}"
+certs_sent() {
+  local sni=()
+  [ "$1" != "-" ] && sni=(-servername "$1")
+  openssl s_client -connect 127.0.0.1:443 "${sni[@]}" < /dev/null 2>&1 | grep -c 'BEGIN CERTIFICATE' || true
+}
+CATCH_ALL_BEFORE=$(sudo test -L /etc/nginx/sites-enabled/lamalibre-lamaste-https-default && echo yes || echo no)
+UNKNOWN_CERTS_BEFORE=$(certs_sent "${UNKNOWN_NAME}")
+log_info "Before the update: catch-all ${CATCH_ALL_BEFORE}; ${UNKNOWN_NAME} got ${UNKNOWN_CERTS_BEFORE} certificate(s)"
+
 log_section "POST /api/system/update to ${CANDIDATE}"
 
 UPDATE_STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -368,7 +386,12 @@ if sudo nginx -t > /dev/null 2>&1; then
 else
   log_fail "nginx -t fails after the update"
 fi
-assert_eq "$(host_status "${ON_FQDN}") $(host_status "${OFF_FQDN}") $(host_status "${AUTH_FQDN}")" "${BEFORE}" "Every host answers as before (${BEFORE})" || true
+read -r ON_BEFORE OFF_BEFORE AUTH_BEFORE <<< "${BEFORE}"
+assert_eq "$(host_status "${ON_FQDN}") $(host_status "${AUTH_FQDN}")" "${ON_BEFORE} ${AUTH_BEFORE}" "The enabled tunnel and the auth portal answer as before (${ON_BEFORE} ${AUTH_BEFORE})" || true
+# The disabled tunnel's vhost is not linked: no site serves its name. Before
+# 4.14.1 nginx's implicit default server — the first 443 site — answered it
+# (${OFF_BEFORE}); the catch-all refuses it at the handshake (section 7).
+assert_eq "$(host_status "${OFF_FQDN}")" "000" "The disabled tunnel ${OFF_FQDN} is refused at the TLS handshake like any name no site serves (before: ${OFF_BEFORE}, answered by another site)" || true
 
 log_section "The primary domain; every user of ${BEFORE_VERSION} its member"
 
@@ -532,6 +555,26 @@ if [ -n "${PUBLIC}" ]; then
 else
   log_pass "No @lamalibre request to npmjs, its mirrors or the hosted Feria — before the update or after"
 fi
+
+# ===========================================================================
+# 7. Unknown hostnames (4.14.1)
+# ===========================================================================
+
+log_section "A name no site serves fails the TLS handshake"
+
+if [ "${CATCH_ALL_BEFORE}" = "no" ]; then
+  assert_not_eq "${UNKNOWN_CERTS_BEFORE}" "0" "Before the update, ${UNKNOWN_NAME} was answered with another site's certificate" || true
+fi
+assert_eq "$(sudo test -L /etc/nginx/sites-enabled/lamalibre-lamaste-https-default && echo yes || echo no)" "yes" "The update installed lamalibre-lamaste-https-default" || true
+assert_contains "$(sudo cat /etc/nginx/sites-available/lamalibre-lamaste-https-default 2>/dev/null || echo "")" "ssl_reject_handshake on;" "…refusing the handshake" || true
+assert_eq "$(certs_sent "${UNKNOWN_NAME}")" "0" "${UNKNOWN_NAME}: no certificate now" || true
+UNKNOWN_RC=0
+curl -s -o /dev/null --max-time 10 --resolve "${UNKNOWN_NAME}:443:127.0.0.1" "https://${UNKNOWN_NAME}/" 2>/dev/null || UNKNOWN_RC=$?
+assert_eq "${UNKNOWN_RC}" "35" "${UNKNOWN_NAME}: curl reports a TLS handshake failure (exit 35)" || true
+assert_eq "$(certs_sent -)" "0" "No SNI: no certificate" || true
+assert_eq "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/api/health" 2>/dev/null || echo 000)" "200" "${AUTH_FQDN}/api/health still answers 200" || true
+ON_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ON_FQDN}:443:127.0.0.1" "https://${ON_FQDN}/" 2>/dev/null || true)
+assert_not_eq "${ON_STATUS:-000}" "000" "The enabled tunnel ${ON_FQDN} still completes its handshake (${ON_STATUS})" || true
 
 log_section "The panel logged no error since the update"
 

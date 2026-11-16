@@ -953,3 +953,171 @@ test('a channel that dies without a FIN fails its calls at once and is replaced'
     await proxy.close();
   }
 });
+
+// --- a consumer's own edges (4.14.1) -------------------------------------------
+
+/** The relay's list of the consumer's edges, as serverd computes it. */
+const edgesState = {
+  list: [
+    {
+      scope: 'directory:read',
+      provider: 'directory',
+      major: 1,
+      required: true,
+      events: ['unit.renamed'],
+      effective: true,
+      reason: null,
+    },
+    {
+      scope: 'mailer:send',
+      provider: 'mailer',
+      major: 1,
+      required: false,
+      events: [],
+      effective: false,
+      reason: 'not_granted',
+    },
+  ],
+  listeners: new Set(),
+  reads: 0,
+};
+
+function edgesChanged() {
+  for (const listener of [...edgesState.listeners]) listener();
+}
+
+test('a relay that lists no edges: the half stops asking and stays unknown until the next attach', async () => {
+  gatewayOptions.edges = undefined;
+  gatewayOptions.onEdgesChanged = undefined;
+  // Read on the channel: the relay's own path, answered 404 bad_path.
+  await assert.rejects(
+    () =>
+      consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+        json: { digest: null, waitMs: 0 },
+      }),
+    (err) => err instanceof PeerCallError && err.code === 'bad_path' && err.status === 404,
+  );
+  assert.deepEqual(consumer.peers.edges(), { known: false, confirmedAt: null, consumes: [] });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(consumer.peers.edges().known, false);
+
+  gatewayOptions.edges = (from) => {
+    edgesState.reads += 1;
+    return from === 'leave' ? edgesState.list : [];
+  };
+  gatewayOptions.onEdgesChanged = (listener) => {
+    edgesState.listeners.add(listener);
+    return () => edgesState.listeners.delete(listener);
+  };
+  relay.replace('leave');
+  await waitFor(() => consumer.peers.edges().known);
+});
+
+test("the half's edges: one per consumed scope, effective or why not", async () => {
+  const snapshot = await waitFor(() => {
+    const s = consumer.peers.edges();
+    return s.known ? s : null;
+  });
+  assert.ok(snapshot.confirmedAt && !Number.isNaN(Date.parse(snapshot.confirmedAt)));
+  assert.deepEqual(
+    snapshot.consumes.map((e) => [e.scope, e.provider, e.effective, e.reason, e.events]),
+    [
+      ['directory:read', 'directory', true, null, ['unit.renamed']],
+      ['mailer:send', 'mailer', false, 'not_granted', []],
+    ],
+  );
+});
+
+test('a change wakes the held read at once; listeners get the new list', async () => {
+  // The held read waits up to 25 s; a change must not wait for it.
+  await waitFor(() => edgesState.listeners.size > 0);
+  const seen = [];
+  const off = consumer.peers.onEdgesChanged((s) => seen.push(s));
+  edgesState.list = edgesState.list.map((e) =>
+    e.scope === 'mailer:send'
+      ? { ...e, effective: true, reason: null, events: [] }
+      : { ...e, effective: false, reason: 'provider_disabled', events: [] },
+  );
+  const started = Date.now();
+  edgesChanged();
+  await waitFor(() => seen.length > 0, 3000);
+  assert.ok(Date.now() - started < 3000);
+  assert.deepEqual(
+    seen[0].consumes.map((e) => [e.scope, e.effective, e.reason]),
+    [
+      ['directory:read', false, 'provider_disabled'],
+      ['mailer:send', true, null],
+    ],
+  );
+  assert.deepEqual(consumer.peers.edges().consumes, seen[0].consumes);
+
+  // A wake with nothing changed answers nothing: the relay reads the list
+  // again (once), and the read stays held — nothing confirmed anew.
+  await waitFor(() => edgesState.listeners.size > 0);
+  const before = seen.length;
+  const confirmed = consumer.peers.edges().confirmedAt;
+  const reads = edgesState.reads;
+  edgesChanged();
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(edgesState.reads, reads + 1, 'the relay looked again');
+  assert.equal(consumer.peers.edges().confirmedAt, confirmed, 'and answered nothing');
+  assert.equal(seen.length, before);
+  off();
+});
+
+test('a new channel reads the edges at once: the read held on the old one is cancelled', async () => {
+  await waitFor(() => edgesState.listeners.size > 0);
+  const confirmed = consumer.peers.edges().confirmedAt;
+  await new Promise((r) => setTimeout(r, 20));
+  const started = Date.now();
+  relay.replace('leave');
+  // The old channel drains for up to 25 s; the half does not wait for it.
+  await waitFor(() => consumer.peers.edges().confirmedAt !== confirmed, 3000);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test('a newer held read replaces the held one, which is answered at once', async () => {
+  await waitFor(() => edgesState.listeners.size > 0);
+  const confirmed = consumer.peers.edges().confirmedAt;
+  await new Promise((r) => setTimeout(r, 20));
+  const { digest } = await (
+    await consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+      json: { digest: null, waitMs: 0 },
+    })
+  ).json();
+  // This read takes the slot: the half's held read is answered (confirmed
+  // anew), and the half's next read takes the slot back — answering this one.
+  const started = Date.now();
+  const response = await consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+    json: { digest, waitMs: 20_000 },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).digest, digest);
+  assert.ok(Date.now() - started < 3000, 'replaced, not held for its wait');
+  await waitFor(() => consumer.peers.edges().confirmedAt !== confirmed, 3000);
+  await assert.rejects(
+    () =>
+      consumer.peers.call('directory:read', 'POST', '/.lamaste/edges', {
+        json: { digest: 'nope', waitMs: 0 },
+      }),
+    (err) => err instanceof PeerCallError && err.code === 'bad_request',
+  );
+});
+
+test('a consumer that no longer qualifies gets no edges after its wait', async () => {
+  // Wait until the half's own read is held, then release it with a change
+  // that lands while the consumer is not allowed.
+  await waitFor(() => edgesState.listeners.size > 0);
+  const snapshotBefore = consumer.peers.edges();
+  state.consumerAllowed = false;
+  edgesState.list = edgesState.list.map((e) => ({ ...e, required: !e.required }));
+  edgesChanged();
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepEqual(consumer.peers.edges().consumes, snapshotBefore.consumes);
+  state.consumerAllowed = true;
+  await waitFor(() =>
+    consumer.peers
+      .edges()
+      .consumes.every((e, i) => e.required !== snapshotBefore.consumes[i].required),
+  );
+});

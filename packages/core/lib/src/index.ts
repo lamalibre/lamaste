@@ -430,6 +430,7 @@ export {
   PEER_CHANNEL_UPGRADE,
   PEER_CHANNEL_RELAY_PREFIX,
   PEER_CHANNEL_EVENTS_PATH,
+  PEER_CHANNEL_EDGES_PATH,
   PEER_SCOPE_HEADER,
   PEER_HOPS_HEADER,
   PEER_TIMEOUT_HEADER,
@@ -522,6 +523,28 @@ export type {
   PeerEventsGap,
   PeerEventsChannelAnswer,
 } from './peer-events.js';
+
+// The relay's port-443 catch-all (4.14.1)
+export {
+  HTTPS_CATCH_ALL_SITE,
+  HTTPS_CATCH_ALL_ENABLED_PATH,
+  RELAY_HTTPS_LISTEN,
+  RELAY_TLS_DIRECTIVES,
+  renderHttpsCatchAllVhost,
+} from './https-catch-all.js';
+
+// A consumer's own edges, read over its peer channel (4.14.1)
+export {
+  PEER_EDGES_WAIT_MAX_MS,
+  PEER_EDGES_WAIT_MIN_MS,
+  PEER_EDGES_REQUEST_MAX_BYTES,
+  PEER_EDGES_ANSWER_MAX_BYTES,
+  PEER_EDGE_REASONS,
+  peerEdgesAnswer,
+  parsePeerEdgesRequest,
+  parsePeerEdgesAnswer,
+} from './peer-edges.js';
+export type { PeerEdge, PeerEdgeReason, PeerEdgesRequest, PeerEdgesAnswer } from './peer-edges.js';
 
 // Peer delegations: a plugin calling another on behalf of a person it serves
 export {

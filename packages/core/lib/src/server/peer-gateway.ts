@@ -55,6 +55,13 @@
  * before it answers, so nothing crosses after a revocation that landed
  * while the provider held the pull.
  *
+ * **A consumer's own edges** (`POST /.lamaste/edges`, `peer-edges.ts`): the
+ * scopes its approved version consumes and whether each is effective,
+ * answered at once when the consumer's digest is not the current list's,
+ * otherwise held — one per consumer; a newer read replaces the held one,
+ * which is answered at once — until `onEdgesChanged` fires and the list
+ * differs, or the wait passes.
+ *
  * **Floors.** Every gap the relay answers records the position it told the
  * consumer to resume from (`recordEventFloor`, per consumer and scope, with
  * the epoch and stream it was given for); a pull whose cursor is below the
@@ -89,6 +96,7 @@ import {
   PEER_RESPONSE_SWEEP_MS,
   PEER_CALL_TIMEOUT_DEFAULT_MS,
   PEER_CALL_TIMEOUT_MAX_MS,
+  PEER_CHANNEL_EDGES_PATH,
   PEER_CHANNEL_EVENTS_PATH,
   PEER_CHANNEL_RELAY_PREFIX,
   PEER_DELEGATION_HEADER,
@@ -123,6 +131,12 @@ import type {
   RequestHookPlan,
   RequestHookRuntime,
 } from './forward-core.js';
+import {
+  PEER_EDGES_REQUEST_MAX_BYTES,
+  parsePeerEdgesRequest,
+  peerEdgesAnswer,
+} from '../peer-edges.js';
+import type { PeerEdge, PeerEdgesAnswer } from '../peer-edges.js';
 import {
   PEER_EVENTS_ANSWER_MAX_BYTES,
   PEER_EVENTS_REQUEST_MAX_BYTES,
@@ -258,6 +272,17 @@ export interface PeerGatewayOptions extends AgentForwardTimeouts {
    * open (`429 too_many_pulls`). Without it pulls are not limited.
    */
   acquireEventsPull?: ((consumer: string, scope: string) => (() => void) | null) | undefined;
+  /**
+   * The consumer's own edges: one per scope its approved version consumes
+   * (`POST /.lamaste/edges`). Without it, that path answers `404`.
+   */
+  edges?: ((consumer: string) => MaybePromise<readonly PeerEdge[]>) | undefined;
+  /**
+   * Subscribe to "the edges may have changed" (returns an unsubscribe):
+   * every held edges request reads its list again then. Without it, a held
+   * request is answered when its wait passes.
+   */
+  onEdgesChanged?: ((listener: () => void) => () => void) | undefined;
   /** The providers' request hooks; without it every call streams through untouched. */
   readonly hooks?: RequestHookRuntime | undefined;
   /**
@@ -813,6 +838,114 @@ export function createPeerGateway(
     });
   }
 
+  /**
+   * Held edges requests: one per consumer. A newer one replaces the held
+   * one (answered at once) — the consumer's half reads on its newest
+   * channel; the older stream is one it no longer waits on.
+   */
+  interface HeldEdges {
+    wake(): void;
+    supersede(): void;
+  }
+  const edgesWaiting = new Map<string, HeldEdges>();
+  let edgesUnsubscribe: (() => void) | null = null;
+
+  function wakeEdges(): void {
+    for (const held of [...edgesWaiting.values()]) held.wake();
+  }
+
+  async function handleEdges(
+    req: Http2ServerRequest,
+    res: Http2ServerResponse,
+    consumer: string,
+    startedAt: number,
+  ): Promise<void> {
+    const answer = (status: number, body: PeerEdgesAnswer): void => {
+      writeJson(res, status, body);
+      log({
+        consumer,
+        provider: null,
+        scope: null,
+        method: 'EDGES',
+        endpoint: null,
+        startedAt,
+        outcome: { status },
+      });
+    };
+    const edgesOf = opts.edges;
+    if (!edgesOf) return void refuse(res, 404, 'bad_path', 'This relay does not list edges');
+    if (req.method.toUpperCase() !== 'POST') {
+      return void refuse(res, 405, 'bad_request', 'Edges are read with POST');
+    }
+    const raw = await readSmallBody(req, PEER_EDGES_REQUEST_MAX_BYTES);
+    let parsed: unknown = null;
+    try {
+      parsed = raw ? JSON.parse(raw.toString('utf-8')) : null;
+    } catch {
+      parsed = null;
+    }
+    const request = parsePeerEdgesRequest(parsed);
+    if (!request) return void refuse(res, 400, 'bad_request', 'Malformed edges request');
+    let current = peerEdgesAnswer(await edgesOf(consumer));
+    if (request.digest !== current.digest || request.waitMs === 0) {
+      return answer(200, current);
+    }
+    // The consumer may have cancelled while the list was read: nothing to hold.
+    if (res.closed || res.destroyed || res.stream.closed) return;
+    edgesWaiting.get(consumer)?.supersede();
+
+    // Held: until the list differs from what the consumer holds, the wait
+    // passes, a newer read replaces this one, or the stream closes.
+    type Why = 'woken' | 'superseded' | 'elapsed' | 'closed';
+    let settle: (why: Why) => void = () => {};
+    const next = (): Promise<Why> =>
+      new Promise((resolve) => {
+        settle = resolve;
+      });
+    let signal = next();
+    const held: HeldEdges = {
+      wake: () => settle('woken'),
+      supersede: () => settle('superseded'),
+    };
+    edgesWaiting.set(consumer, held);
+    if (opts.onEdgesChanged && !edgesUnsubscribe) edgesUnsubscribe = opts.onEdgesChanged(wakeEdges);
+    let timer: NodeJS.Timeout | null = null;
+    let superseded = false;
+    let elapsed = false;
+    const onClose = (): void => settle('closed');
+    res.once('close', onClose);
+    timer = setTimeout(() => {
+      elapsed = true;
+      settle('elapsed');
+    }, request.waitMs);
+    timer.unref();
+    try {
+      for (;;) {
+        const why = await signal;
+        if (why === 'closed') return;
+        if (why === 'superseded') superseded = true;
+        signal = next();
+        current = peerEdgesAnswer(await edgesOf(consumer));
+        if (superseded || elapsed || current.digest !== request.digest) break;
+      }
+    } finally {
+      clearTimeout(timer);
+      res.removeListener('close', onClose);
+      if (edgesWaiting.get(consumer) === held) edgesWaiting.delete(consumer);
+      if (edgesWaiting.size === 0 && edgesUnsubscribe) {
+        edgesUnsubscribe();
+        edgesUnsubscribe = null;
+      }
+    }
+    if (res.closed || res.destroyed) return;
+    // The consumer may have stopped qualifying while it waited.
+    if (opts.consumerAllowed && !(await opts.consumerAllowed(consumer))) {
+      denied(consumer, null, 'not_granted');
+      return void refuse(res, 403, 'not_granted', 'This plugin may not use its channel now');
+    }
+    answer(200, current);
+  }
+
   return async (req, res, consumer) => {
     const startedAt = Date.now();
     try {
@@ -832,8 +965,11 @@ export function createPeerGateway(
         }
         return;
       }
-      if (pathPartOf(req.url) === PEER_CHANNEL_EVENTS_PATH) {
+      const pathPart = pathPartOf(req.url);
+      if (pathPart === PEER_CHANNEL_EVENTS_PATH) {
         await handleEvents(req, res, consumer, startedAt);
+      } else if (pathPart === PEER_CHANNEL_EDGES_PATH) {
+        await handleEdges(req, res, consumer, startedAt);
       } else {
         await handleCall(req, res, consumer, startedAt);
       }

@@ -59,6 +59,7 @@ import { recordAuditBestEffort } from './audit.js';
 import { getDirectoryUser, principalCleanupPending } from './directory.js';
 import { identityReadiness } from './identity-sync.js';
 import {
+  edgesOfConsumer,
   effectivePeerEdge,
   effectiveSubscription,
   eventFloor,
@@ -368,9 +369,27 @@ function auditDenial({ consumer, scope, code }, logger) {
   return true;
 }
 
+/** Held edges requests to wake on every tick too (a change the snapshot only notices when it ages). */
+const edgesTickListeners = new Set();
+
+/**
+ * "A consumer's edges may have changed": whenever the effective edges are
+ * invalidated, and on every tick.
+ */
+function onEdgesChanged(listener) {
+  const off = onPeersChanged(() => listener());
+  edgesTickListeners.add(listener);
+  return () => {
+    off();
+    edgesTickListeners.delete(listener);
+  };
+}
+
 /** The gateway's options — exported for the tests, which drive it without channels. */
 export function peerGatewayOptions(logger) {
   return {
+    edges: edgesOfConsumer,
+    onEdgesChanged,
     edge: async (consumer, scope) => {
       const edge = await effectivePeerEdge(consumer, scope);
       return edge ? { provider: edge.provider, major: edge.major, provided: edge.provided } : null;
@@ -484,15 +503,20 @@ export async function onPeerHealthTransition(route, after, logger) {
 }
 
 async function peerTick(logger) {
-  const { plugins } = await readPlugins();
-  for (const plugin of plugins) {
-    if (!plugin.route || !plugin.peers || peerReady(plugin)) continue;
-    const record = await ownHosting(plugin).catch(() => null);
-    if (record && pluginHostingPhase(record) === 'active' && record.health?.state === 'up') {
-      await refreshPeerReadiness(plugin.route, logger);
+  try {
+    const { plugins } = await readPlugins();
+    for (const plugin of plugins) {
+      if (!plugin.route || !plugin.peers || peerReady(plugin)) continue;
+      const record = await ownHosting(plugin).catch(() => null);
+      if (record && pluginHostingPhase(record) === 'active' && record.health?.state === 'up') {
+        await refreshPeerReadiness(plugin.route, logger);
+      }
     }
+    await syncPeerChannels(logger);
+  } finally {
+    // Held edges reads look again even when the tick's other steps failed.
+    for (const listener of [...edgesTickListeners]) listener();
   }
-  await syncPeerChannels(logger);
   await pruneEventFloors().catch((err) =>
     logger?.warn({ err: err?.message }, 'Pruning peer event floors failed'),
   );

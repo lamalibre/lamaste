@@ -221,6 +221,24 @@ A provider that itself has an effective outgoing edge receives a delegation for 
 
 An offline consumer or provider simply waits: catching up from the cursor is the normal path.
 
+## A consumer's own edges
+
+A consumer's half can learn which of the scopes it consumes are granted to it before it calls (4.14.1), so a plugin that may use one of several providers knows which one it has.
+
+```js
+const peers = createPeers({ configPath, plugin: 'notify', db });
+peers.onEdgesChanged(({ consumes }) => pickProviders(consumes));
+const { known, confirmedAt, consumes } = peers.edges();
+// consumes: [{ scope: 'mailer:send', provider: 'mailer', major: 1, required: false,
+//              events: [], effective: true, reason: null }, …]
+```
+
+- **One entry per scope the half's installed, approved version consumes.** `effective` means an applied shelf grants the edge and both sides' approved versions agree on it (the scope provided, the major served, both enabled). It is not a health check: a call to an effective scope can still be answered `503 peer_unavailable`. `events` lists the event types the edge carries.
+- **`reason`** is null when the edge is effective. `not_granted` means no applied shelf names the edge. Otherwise it is why an applied grant is pending: `provider_not_installed`, `not_provided`, `provider_disabled`, `provider_not_approved` or `major_mismatch`. `consumer_disabled` appears only for the moment before a disabled consumer's channel closes. A consumer that is not installed or not approved has no channel, so it reads no list. A newer relay may add reasons, and new fields, which an older SDK ignores.
+- **`known`** is false until the relay has answered once since the half started. Nothing is persisted, so a restarted half does not report a stale grant. `confirmedAt` is when the relay last confirmed the list. It advances at least every 25 s while the channel is up; while the channel is down (`connected()`), it stops and the last list is kept.
+- **`onEdgesChanged(listener)`** returns an unsubscribe. It is called when the list first becomes known and after every change: a shelf applied or removed, an install, update, approval, enable or disable on either side, a provider uninstalled. The first use of `edges()` or `onEdgesChanged()` starts the reading.
+- **On the wire:** `POST /.lamaste/edges` `{ digest, waitMs }` on the half's peer channel → `{ digest, consumes }` (the list sorted by scope, and its SHA-256). The half reads at once on every new channel. The digest is the relay's change token, sent back as given and never recomputed. The half then keeps one request held. A newer read from the same consumer replaces the held one, which is answered at once, and a read held on a replaced channel is cancelled. The relay answers when the list's digest changes, woken by any change to the effective edges and by its tick, or otherwise after 25 s. A relay from before 4.14.1 answers `400 bad_path`; the half then stops asking until the next attach.
+
 ## Peer readiness
 
 `GET /admin/peers` (Lamaste's own call) → `{ protocol: 1, consumer, outbox: { streamId, head, horizon } | null, inbox }`. The relay attaches to, forwards to and pulls from only a half that answered protocol 1 for its installed version (asked after hosting, an update, an approval, each health transition to up, and on a tick).
@@ -264,10 +282,13 @@ const outbox = await createPeerOutbox({ db, dbPath, peers: manifest.peers });
 await app.register(peerSurface({ verifier, outbox }));
 app.get(
   '/peer/people/:userId/manager',
-  peerRoute(async (request, caller) => {
-    // caller: { peer, scope, major, endpoint, hops, user?: { userId, username, roles } }
-    return lookupManager(request.params.userId);
-  }),
+  peerRoute(
+    async (request, caller) => {
+      // caller: { peer, scope, major, endpoint, hops, user?: { userId, username, roles } }
+      return lookupManager(request.params.userId);
+    },
+    { scope: 'directory:read' },
+  ),
 );
 
 db.exec('BEGIN');
@@ -281,7 +302,7 @@ outbox.publish({
 db.exec('COMMIT');
 ```
 
-`peerSurface` refuses every `/peer` request a route made by `peerRoute` does not answer (fail closed); `peerRoute` verifies the `peer` caller, checks its `endpoint` against the route, and signs every answer. **Register `peerSurface` before any `/peer` route:** registering it after one fails, and a `/peer` route registered after it that is not a `peerRoute` fails its registration — the half does not start with an unchecked route on its peer surface. Routes elsewhere (`/admin/*`, `/app/*`) may come first. A half without Fastify uses `createPeerAdminHandler` for `/admin/peers*`.
+`peerSurface` refuses every `/peer` request a route made by `peerRoute` does not answer (fail closed); `peerRoute` verifies the `peer` caller, checks its `endpoint` against the route — and, with `{ scope }` (one scope or several), that the call was made under the route's scope — and signs every answer. **The caller is verified before the body is read:** all of that runs in the route's own `onRequest` hook, once per request (the verifier burns the assertion's nonce, so a second `verify()` of the same request is a replay), and Fastify reads and parses the body only after it passed. A refusal is `401` (unsigned), `403` (signed), or `503` when the half has no configuration to verify with yet, and a refused request that carries a body is answered `Connection: close`, so its upload is never read to its end. From `preParsing` on, `peerCallerOf(request)` gives the verified caller to a hook of the provider's own. To add options spread `peerRoute`'s (`{ ...peerRoute(handler), bodyLimit }`); to add hooks, keep its own in arrays: its `onRequest` first (`onRequest: [options.onRequest, mine]`), its `onSend` anywhere. A `/peer` route that lost them, runs a hook before them, or carries another `peerRoute()`'s hooks fails its registration. **Register `peerSurface` before any `/peer` route:** registering it after one fails, and a `/peer` route registered after it that is not a `peerRoute` fails its registration — the half does not start with an unchecked route on its peer surface. Routes elsewhere (`/admin/*`, `/app/*`) may come first. A half without Fastify uses `createPeerAdminHandler` for `/admin/peers*`.
 
 ## In the panel and the CLI
 

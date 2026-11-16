@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { Cpu, HardDrive, Clock, Activity, Database } from 'lucide-react';
+import { Cpu, HardDrive, Clock, Activity, Database, ShieldAlert } from 'lucide-react';
 import { formatBytes, formatUptime } from '../lib/formatters.js';
+import { httpsCatchAllProblem } from '../lib/https-catch-all.js';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 
 function StatsCard({ icon: Icon, label, value, isLoading, isError }) {
@@ -15,6 +16,37 @@ function StatsCard({ icon: Icon, label, value, isLoading, isError }) {
       ) : (
         <p className="text-xl font-semibold text-white">{value}</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The relay's port-443 catch-all is not in place: a hostname no site serves
+ * gets another site's certificate and sign-in redirect.
+ */
+function HttpsCatchAllWarning({ status }) {
+  const problem = httpsCatchAllProblem(status);
+  if (!problem) return null;
+  return (
+    <div
+      role="alert"
+      className="mb-6 flex gap-3 rounded-lg border border-red-900 bg-red-950/40 p-4 text-sm"
+    >
+      <ShieldAlert size={20} className="mt-0.5 shrink-0 text-red-400" />
+      <div>
+        <p className="font-semibold text-red-300">Unknown hostnames are not refused</p>
+        <p className="mt-1 text-zinc-300">
+          The HTTPS catch-all (
+          <code className="text-zinc-200">lamalibre-lamaste-https-default</code>) {problem}. A
+          hostname no site serves — a typo under a wildcard DNS record — gets another site&rsquo;s
+          certificate and sign-in redirect.
+        </p>
+        <p className="mt-1 text-zinc-400">
+          Another nginx site may own port 443&rsquo;s default server: find it with{' '}
+          <code className="text-zinc-200">grep -rn default_server /etc/nginx/sites-enabled/</code>,
+          remove it, then run the Panel Update.
+        </p>
+      </div>
     </div>
   );
 }
@@ -50,6 +82,8 @@ export default function Dashboard() {
         <h1 className="text-xl font-bold text-white">Dashboard</h1>
         <p className="text-zinc-500 text-sm mt-1">System overview and service health</p>
       </div>
+
+      <HttpsCatchAllWarning status={stats?.httpsCatchAll?.status} />
 
       {/* System Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">

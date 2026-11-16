@@ -49,6 +49,17 @@ const refused = {
   client_body_temp_path: server(' client_body_temp_path /etc/sudoers.d;'),
   proxy_cache_path: 'proxy_cache_path /etc/x keys_zone=z:1m;\n' + server(''),
   'listen on port 80': 'server {\n listen 80;\n server_name a.example.com;\n}\n',
+  // The installer's HTTPS catch-all owns port 443's default server.
+  'listen 443 as the default server': server('').replace(
+    'listen 443 ssl;',
+    'listen 443 ssl default_server;',
+  ),
+  'listen 443 as the default server, IPv6': server('').replace(
+    'listen 443 ssl;',
+    'listen [::]:443 ssl default_server;',
+  ),
+  ssl_reject_handshake: server(' ssl_reject_handshake on;'),
+  'listen on IPv6': server('').replace('listen 443 ssl;', 'listen [::]:443 ssl;'),
   'listen on a unix socket': 'server {\n listen unix:/etc/x;\n}\n',
   backslash: server(String.raw` add_header X a\;access_log;`),
   'dollar-brace variable': server(' add_header X ${x};'),
@@ -279,6 +290,22 @@ test('site names: only the vhosts the panel writes', () => {
     'lamalibre-lamaste-agent-panel-agent-r730',
   ]) {
     assert.throws(() => assertSiteName(name, 'write'), name);
+  }
+});
+
+test("the installer's catch-alls are not the panel's to write, disable or remove", () => {
+  for (const name of ['lamalibre-lamaste-https-default', 'lamalibre-lamaste-http-redirect']) {
+    for (const action of [
+      'write',
+      'backup',
+      'restore',
+      'discard-backup',
+      'enable',
+      'disable',
+      'remove',
+    ]) {
+      assert.throws(() => assertSiteName(name, action), `${action} ${name}`);
+    }
   }
 });
 
