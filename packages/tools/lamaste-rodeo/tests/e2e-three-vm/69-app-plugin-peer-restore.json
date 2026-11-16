@@ -421,7 +421,24 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-34",
+          "label": "Set EVENTS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "events_tags"
+          },
+          "capture": [
+            {
+              "variable": "EVENTS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
           "label": "Set OUT",
           "target": "local",
           "op": {
@@ -438,7 +455,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections",
           "target": "local",
           "continueOnError": true,
@@ -459,7 +476,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "Set RENEWED",
           "target": "local",
           "op": {
@@ -476,7 +493,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "Set STREAM_C",
           "target": "local",
           "op": {
@@ -493,7 +510,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "renewPeerOutboxStream answered a new stream (${RENEWED})",
           "target": "local",
           "continueOnError": true,
@@ -514,7 +531,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "…not the backup's",
           "target": "local",
           "continueOnError": true,
@@ -535,7 +552,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "The running outbox serves the renewed stream",
           "target": "local",
           "continueOnError": true,
@@ -554,23 +571,6 @@
               "message": "The running outbox serves the renewed stream"
             }
           }
-        },
-        {
-          "id": "step-44",
-          "label": "Set EVENTS_BEFORE",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "events_tags"
-          },
-          "capture": [
-            {
-              "variable": "EVENTS_BEFORE",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
         },
         {
           "id": "step-46",
@@ -675,7 +675,7 @@
           }
         }
       ],
-      "bash": "log_section \"Restored and the stream renewed: the gap stream_changed\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nOUT=$(provider_backup)\nSTREAM_B=$(json_get \"$OUT\" '.state.streamId')\nprovider_publish 2 z > /dev/null\nif wait_for 60 has_tag z-2; then\n  log_pass \"The consumer read z-1 and z-2, written after the second backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the second restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections\" || true\nRENEWED=$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\nSTREAM_C=$(json_get \"$RENEWED\" '.renewed.streamId // empty')\nassert_not_eq \"${STREAM_C}\" \"\" \"renewPeerOutboxStream answered a new stream (${RENEWED})\" || true\nassert_not_eq \"${STREAM_C}\" \"${STREAM_B}\" \"…not the backup's\" || true\nprovider_back \"Restored and renewed\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_C}\" \"The running outbox serves the renewed stream\" || true\nprovider_publish 3 w > /dev/null\nEVENTS_BEFORE=$(events_tags)\nconsumer_back \"After the second restore\"\nif wait_for 90 gaps_are \"initial,stream_changed\"; then\n  log_pass \"The consumer's next pull was answered the gap stream_changed (onGap ran)\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The gap reconciled: a cursor again, no gap pending\"\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nassert_eq \"$(cursor_stream)\" \"${STREAM_C}\" \"The consumer's cursor is on the renewed stream\" || true\nassert_eq \"$(events_tags)\" \"${EVENTS_BEFORE}\" \"None of w-1..w-3 crossed as events — the reconcile covers them\" || true\nprovider_publish 1 v > /dev/null\nif wait_for 60 has_tag v-1; then\n  log_pass \"It reads on, on the new stream: v-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 3. A cursor ahead of the restored head\n# ==========================================================================="
+      "bash": "log_section \"Restored and the stream renewed: the gap stream_changed\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nOUT=$(provider_backup)\nSTREAM_B=$(json_get \"$OUT\" '.state.streamId')\nprovider_publish 2 z > /dev/null\nif wait_for 60 has_tag z-2; then\n  log_pass \"The consumer read z-1 and z-2, written after the second backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n# What the consumer recorded before it goes away (its half answers nothing while stopped).\nEVENTS_BEFORE=$(events_tags)\nconsumer_away \"Before the second restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections\" || true\nRENEWED=$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\nSTREAM_C=$(json_get \"$RENEWED\" '.renewed.streamId // empty')\nassert_not_eq \"${STREAM_C}\" \"\" \"renewPeerOutboxStream answered a new stream (${RENEWED})\" || true\nassert_not_eq \"${STREAM_C}\" \"${STREAM_B}\" \"…not the backup's\" || true\nprovider_back \"Restored and renewed\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_C}\" \"The running outbox serves the renewed stream\" || true\nprovider_publish 3 w > /dev/null\nconsumer_back \"After the second restore\"\nif wait_for 90 gaps_are \"initial,stream_changed\"; then\n  log_pass \"The consumer's next pull was answered the gap stream_changed (onGap ran)\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The gap reconciled: a cursor again, no gap pending\"\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nassert_eq \"$(cursor_stream)\" \"${STREAM_C}\" \"The consumer's cursor is on the renewed stream\" || true\nassert_eq \"$(events_tags)\" \"${EVENTS_BEFORE}\" \"None of w-1..w-3 crossed as events — the reconcile covers them\" || true\nprovider_publish 1 v > /dev/null\nif wait_for 60 has_tag v-1; then\n  log_pass \"It reads on, on the new stream: v-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 3. A cursor ahead of the restored head\n# ==========================================================================="
     },
     {
       "id": "restored-and-renewed-nothing-written-since-the-cursor-ahead-of-the-head",

@@ -193,6 +193,8 @@ if wait_for 60 has_tag z-2; then
 else
   log_fail "Recorded: $(events_tags)"
 fi
+# What the consumer recorded before it goes away (its half answers nothing while stopped).
+EVENTS_BEFORE=$(events_tags)
 consumer_away "Before the second restore"
 OUT=$(restore_provider renew)
 assert_contains "$OUT" "RESTORED" "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections" || true
@@ -203,7 +205,6 @@ assert_not_eq "${STREAM_C}" "${STREAM_B}" "…not the backup's" || true
 provider_back "Restored and renewed"
 assert_eq "$(stream_of_provider)" "${STREAM_C}" "The running outbox serves the renewed stream" || true
 provider_publish 3 w > /dev/null
-EVENTS_BEFORE=$(events_tags)
 consumer_back "After the second restore"
 if wait_for 90 gaps_are "initial,stream_changed"; then
   log_pass "The consumer's next pull was answered the gap stream_changed (onGap ran)"
