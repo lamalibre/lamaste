@@ -80,7 +80,11 @@ import { peerContextOf } from './peer-context.js';
 
 /** A failed call: the relay's code (`not_granted`, `peer_unavailable`, …) or the client's own. */
 export class PeerCallError extends Error {
-  /** The relay's code, `relay_unavailable` (no channel), `timeout`, or `provider_status` (json()). */
+  /**
+   * The relay's code, `relay_unavailable` (no channel), `timeout`, `aborted`
+   * (the call's `signal`), `truncated` (the answer's stream was reset before
+   * it ended), `too_large`, or `provider_status` (json()).
+   */
   readonly code: string;
   /** The HTTP status, when there was an answer. */
   readonly status: number | null;
@@ -140,8 +144,18 @@ export interface PeerCallOptions {
 export interface PeerResponse {
   readonly status: number;
   readonly headers: Record<string, string | string[]>;
-  /** The body as it streams. Read it, or call one of the helpers once. */
+  /**
+   * The body as it streams. Read it, or call one of the helpers once. The
+   * helpers reject (`aborted`, `truncated`) when the stream is reset before
+   * the provider ends it; reading `body` yourself, a reset ends it without
+   * an error — await `finished()` after its end before trusting what you read.
+   */
   readonly body: Readable;
+  /**
+   * Resolves once the stream has closed after the provider ended the body;
+   * rejects (`aborted`, `truncated`) when it was reset instead.
+   */
+  finished(): Promise<void>;
   buffer(maxBytes?: number): Promise<Buffer>;
   text(maxBytes?: number): Promise<string>;
   json<T = unknown>(maxBytes?: number): Promise<T>;
@@ -284,18 +298,51 @@ function headerValue(headers: PeerRequestLike['headers'], name: string): string 
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function readAll(stream: Readable, maxBytes: number): Promise<Buffer> {
+/**
+ * The whole answer, or a rejection: an HTTP/2 stream closed by a reset —
+ * a call aborted through its `signal` (`aborted`), a stream the relay or
+ * the channel reset (`truncated`) — ends its readable side without an
+ * error, so what was received so far would pass for the whole body (and a
+ * prefix of JSON can parse). A body counts only when the peer ended it
+ * cleanly.
+ */
+async function readAll(
+  stream: ClientHttp2Stream,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    size += chunk.length;
-    if (size > maxBytes) {
-      stream.destroy();
-      throw new PeerCallError('too_large', `The answer is larger than ${maxBytes} bytes`);
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > maxBytes) {
+        stream.destroy();
+        throw new PeerCallError('too_large', `The answer is larger than ${maxBytes} bytes`);
+      }
+      chunks.push(chunk);
     }
-    chunks.push(chunk);
+  } catch (err: unknown) {
+    if (err instanceof PeerCallError) throw err;
+    if (signal?.aborted) throw new PeerCallError('aborted', 'The call was aborted');
+    throw new PeerCallError(
+      'truncated',
+      `The answer was cut short: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+  await endedCleanly(stream, signal);
   return Buffer.concat(chunks, size);
+}
+
+/** Resolves once the stream has closed after the provider ended it; rejects for a reset or an abort. */
+async function endedCleanly(stream: ClientHttp2Stream, signal?: AbortSignal): Promise<void> {
+  if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', resolve));
+  if (stream.readableEnded && stream.rstCode === http2.constants.NGHTTP2_NO_ERROR) return;
+  if (signal?.aborted) throw new PeerCallError('aborted', 'The call was aborted');
+  throw new PeerCallError(
+    'truncated',
+    `The answer was cut short (stream reset, code ${String(stream.rstCode)})`,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -566,7 +613,11 @@ export function createPeers(opts: PeersOptions): Peers {
       });
       stream.once('close', () => {
         clearTimeout(timer);
-        reject(new PeerCallError('relay_unavailable', 'The channel closed before an answer'));
+        reject(
+          callOpts.signal?.aborted
+            ? new PeerCallError('aborted', 'The call was aborted')
+            : new PeerCallError('relay_unavailable', 'The channel closed before an answer'),
+        );
       });
     });
     const status = Number(responseHeaders[':status'] ?? 0);
@@ -598,7 +649,7 @@ export function createPeers(opts: PeersOptions): Peers {
       out[name] = Array.isArray(value) ? value : String(value);
     }
     let consumed = false;
-    const once = (): Readable => {
+    const once = (): ClientHttp2Stream => {
       if (consumed) throw new Error('The body was read already');
       consumed = true;
       return stream;
@@ -607,11 +658,12 @@ export function createPeers(opts: PeersOptions): Peers {
       status,
       headers: out,
       body: stream,
-      buffer: (maxBytes = DEFAULT_MAX_BYTES) => readAll(once(), maxBytes),
+      finished: () => endedCleanly(stream, callOpts.signal),
+      buffer: (maxBytes = DEFAULT_MAX_BYTES) => readAll(once(), maxBytes, callOpts.signal),
       text: async (maxBytes = DEFAULT_MAX_BYTES) =>
-        (await readAll(once(), maxBytes)).toString('utf-8'),
+        (await readAll(once(), maxBytes, callOpts.signal)).toString('utf-8'),
       json: async <T>(maxBytes = DEFAULT_MAX_BYTES) => {
-        const raw = (await readAll(once(), maxBytes)).toString('utf-8');
+        const raw = (await readAll(once(), maxBytes, callOpts.signal)).toString('utf-8');
         return (raw.length === 0 ? null : JSON.parse(raw)) as T;
       },
     };

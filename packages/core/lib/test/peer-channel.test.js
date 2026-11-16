@@ -52,6 +52,7 @@ const PEERS = {
         { method: 'GET', path: '/slow' },
         { method: 'GET', path: '/onward' },
         { method: 'GET', path: '/odd-headers' },
+        { method: 'GET', path: '/partial/:mode' },
       ],
       events: ['unit.renamed', 'unit.closed'],
     },
@@ -83,6 +84,7 @@ const state = {
   maxBodyBytes: 100 * 1024 * 1024,
   failGaps: 0,
   pullSlotTaken: false,
+  partialWritten: 0,
 };
 const denials = [];
 /** The relay's event floors, as serverd keeps them: (consumer scope) → { epoch, streamId, floor }. */
@@ -170,6 +172,21 @@ async function startProvider() {
         state.slowWaiters.push(resolve);
       });
       return { slow: true };
+    }),
+  );
+  server.get(
+    '/peer/partial/:mode',
+    peerRoute(async (request, _caller, reply) => {
+      // A prefix that parses as JSON on its own, then: held open until the
+      // caller goes away (`hold`), or the provider fails mid-body (`die`).
+      const body = new Readable({ read() {} });
+      body.push('{"partial":true}');
+      state.partialWritten += 1;
+      if (request.params.mode === 'die') {
+        setTimeout(() => body.destroy(new Error('the provider failed mid-body')), 100);
+      }
+      reply.header('content-type', 'application/json');
+      return body;
     }),
   );
   server.get(
@@ -482,6 +499,53 @@ test('a large streamed body and a server-sent event stream cross the channel', a
   assert.equal(stream.status, 200);
   assert.match(String(stream.headers['content-type']), /text\/event-stream/);
   assert.equal(await stream.text(), 'data: one\n\ndata: two\n\n');
+});
+
+test('a call aborted after its headers: the helpers reject, never a truncated body', async () => {
+  for (const read of ['json', 'text', 'buffer']) {
+    const abort = new AbortController();
+    const written = state.partialWritten;
+    const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold', {
+      signal: abort.signal,
+    });
+    assert.equal(response.status, 200);
+    await waitFor(() => state.partialWritten > written);
+    // The prefix is on its way; abort before the provider ends the body.
+    setTimeout(() => abort.abort(), 100);
+    await assert.rejects(response[read](), { name: 'PeerCallError', code: 'aborted' });
+  }
+  // Read by hand, `finished()` says so too.
+  const abort = new AbortController();
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold', {
+    signal: abort.signal,
+  });
+  setTimeout(() => abort.abort(), 100);
+  const chunks = [];
+  for await (const chunk of response.body) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString('utf-8'), '{"partial":true}');
+  await assert.rejects(response.finished(), { code: 'aborted' });
+});
+
+test('a call aborted before its headers rejects with aborted', async () => {
+  const abort = new AbortController();
+  const call = consumer.peers.call('directory:read', 'GET', '/slow', { signal: abort.signal });
+  await waitFor(() => state.slowWaiters.length > 0);
+  abort.abort();
+  await assert.rejects(call, { name: 'PeerCallError', code: 'aborted' });
+  releaseSlow();
+});
+
+test('a provider that fails mid-body: the answer is truncated, not a shorter body', async () => {
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/die');
+  assert.equal(response.status, 200);
+  await assert.rejects(response.json(), { name: 'PeerCallError', code: 'truncated' });
+  await assert.rejects(consumer.peers.json('directory:read', 'GET', '/partial/die'), {
+    code: 'truncated',
+  });
+  // A body the provider ends: finished() resolves.
+  const whole = await consumer.peers.call('directory:read', 'GET', '/stream');
+  assert.equal(await whole.text(), 'data: one\n\ndata: two\n\n');
+  await whole.finished();
 });
 
 test('a replaced channel lets the call in flight finish; new calls take the new one', async () => {
