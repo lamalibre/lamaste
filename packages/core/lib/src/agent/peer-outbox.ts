@@ -69,8 +69,10 @@ export interface PeerOutboxOptions {
   /** The application's connection: `publish` runs on it, inside its transactions. */
   readonly db: PeerSqlDatabase;
   /**
-   * A read-only connection to the same database file, for pulls. Without
-   * it, `dbPath` is opened read-only with `node:sqlite`.
+   * A dedicated read-only connection to the same database file, for pulls
+   * — never the application's own (`db`): each pull reads in a transaction
+   * of its own on it. Without it, `dbPath` is opened read-only with
+   * `node:sqlite`.
    */
   readonly reader?: PeerSqlDatabase | undefined;
   /** The database file, for the reader the outbox opens itself. */
