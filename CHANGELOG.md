@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **nginx no longer logs query strings.** Every server block the relay renders now carries `access_log /var/log/nginx/access.log lamaste_noquery;`, replacing Ubuntu's http-level `combined` log for it: the same file and the same line shape, but the request's path without its query, no referrer and no client-chosen Basic username. A plugin that carries an identifier, a search or a single-use code in a query no longer has it kept for two weeks. The format and a `$lamaste_request_path` variable come from a new http-level file the installer writes, `/etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf` (root, 0644, `nginx -t` with rollback) — on a fresh install before the first vhost, on a redeploy before the panel stops. `lamaste-priv` accepts that one `access_log` at server level, `off` in a location, and never `log_format`.
+- **Authelia is no longer told query strings.** Authelia logs the URL of every refusal of a signed-in user. The locations that ask it directly (protected static sites, the sign-in host's change-password page, the desktop's `/api/user-access/authorize`) and Gatekeeper now send it the URL without its query; Gatekeeper keeps the whole URL for its own checks. Since Authelia's own redirect would then lose the query, those locations send a request without a session to Gatekeeper's new `/authz/sign-in/<host>`, which redirects to the domain's sign-in with the whole URL, encoded, as `rd`.
+
+### Changed
+
+- **The upgrade rewrites every vhost.** The panel's start rewrites the vhosts it manages (chisel's `tunnel.<domain>` vhost is now among them — before, it was written only at onboarding), and the redeploy refreshes the installer's own sites (IP panel, port-80 redirect, 443 catch-all). Rotated access logs written before the update keep their queries until logrotate ages them out (about two weeks by default); remove `/var/log/nginx/access.log.*` by hand to be rid of them sooner.
+- nginx's error log still records the request line, query included, and the referrer on an upstream error (a tunnel down, a backend that does not answer); it has no format. Documented as a residual in the security model.
+
 ## [4.14.1] - 2026-11-16
 
 Run on rodeo 2026-11-11/12 on fresh VMs, the candidate on a development Feria only (0.5.0, `@example` hosted for spec 62): upgrade `01` from the released 4.14.0 tarballs (byte for byte the hosted release) 117 of 117; three-VM 68 of 68 (3775 assertions; spec 20's old skip; the peers specs 58–61 and the app-plugin regressions 31, 33, 38, 40, 42 among them); single-VM 43 of 43 (2133 assertions; the 5 old one-VM skips; spec 44 new).

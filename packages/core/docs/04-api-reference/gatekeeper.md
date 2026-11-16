@@ -719,6 +719,17 @@ GET /authz/refusal/:fqdn
 
 What an Authelia-protected static site answers a signed-in user Authelia refused with (the site asks Authelia directly, not Gatekeeper). Always 403 with the refusal page; reads no session and decides nothing.
 
+### Sign-in Redirect (nginx `error_page 401`)
+
+```
+GET /authz/sign-in/:fqdn
+X-Original-URL: https://<fqdn><the raw request target>
+```
+
+Where a location asks Authelia directly — an Authelia-protected static site, the sign-in host's change-password page (`/account/password`), the desktop's `/api/user-access/authorize` — nginx tells Authelia the URL **without its query** (Authelia logs the URL of every refusal; [nginx configuration](../03-architecture/nginx-configuration.md#access-logging-and-queries)), so Authelia's own redirect would bring the user back without it. Such a location sends a request without a session here instead (`error_page 401 = /internal/lamaste/sign-in;`), the vhost naming its host in the path and `X-Original-URL` built from nginx's `$request_uri`. The answer is `302` to `https://auth.<the host's domain>/?rd=<the whole URL, query included, percent-encoded as one parameter>`, `Cache-Control: no-store`. Reads no session, sends no cookie anywhere and decides nothing; `403` when the URL is not on the named host (`https://<fqdn>` followed by nothing, `/` or `?`; printable ASCII, no fragment) or the host is under none of the relay's domains (from `domains.json`).
+
+**What Authelia is told.** Every Gatekeeper route that asks Authelia about a session sends it `X-Original-URL` up to the first `?` or `#` — cut from the raw string, never re-encoded — while it keeps the whole original URL for its own checks (a user surface's target and the assertion's path, byte for byte). Lamaste writes no `resources` rules into Authelia's access control, so Authelia's answer never depends on the query.
+
 ### Branded pages
 
 Each page also speaks the **page language** of the host's domain ([Domains API — Page language](domains.md)): `lang`, the title, the sentences, the labels and the access-request page's message templates, from Lamaste's catalogue (`@lamalibre/lamaste` `page-messages`). The language is the projection's — `domains.json` carries `language` for a domain that has one; a missing value, or one that is not a page language, is "not set" and never makes the projection invalid (membership fails closed, presentation fails open). A domain without one, and a host under none of the relay's domains, get English. The copy buttons hold their words in `data-label` / `data-copied` and copy the template's own element, so the page's script is one text for every language. The templates [Check Access](#check-access) returns as JSON stay English.
