@@ -43,8 +43,8 @@ export function renderHttpsCatchAllVhost(): string {
   return `# Managed by Lamaste — a hostname no site serves is refused at the TLS handshake.
 server {
     listen 443 ssl default_server;
-    server_name _;
     ${ACCESS_LOG_DIRECTIVE}
+    server_name _;
 ${RELAY_TLS_DIRECTIVES.map((line) => `    ${line}`).join('\n')}
     ssl_reject_handshake on;
     return 444;

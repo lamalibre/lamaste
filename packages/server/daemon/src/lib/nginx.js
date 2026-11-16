@@ -449,6 +449,13 @@ function originalUrl(fqdn) {
  * Gatekeeper's subrequests keep {@link originalUrl}: Gatekeeper matches the
  * raw target itself and cuts the query before it asks Authelia.
  *
+ * `$lamaste_request_path` is a regex `map` with a positional capture: nginx
+ * stores a map's captures on the request that evaluates it, overwriting
+ * that request's `$1`…`$9`. Here it is evaluated in the authorization
+ * subrequest (and by the access log, after the response), never by a
+ * location of the main request that reads its own captures afterwards — a
+ * generator must keep it that way.
+ *
  * @param {string} fqdn
  */
 function autheliaOriginalUrl(fqdn) {
@@ -456,30 +463,40 @@ function autheliaOriginalUrl(fqdn) {
   return `https://${fqdn}${REQUEST_PATH_VARIABLE}`;
 }
 
-/** Where a location asking Authelia directly sends a request without a session. */
+/** Where a page without a session is sent: {@link signInLocation}. */
 const SIGN_IN_LOCATION = '/internal/lamaste/sign-in';
 
 /**
- * `error_page 401` of a location asking Authelia directly: the
- * {@link signInLocation}. Authelia's own answer (its `Location`) is built
+ * `error_page 401` of every page that asks for a session — a tunnel's, a
+ * web-surface shell's, a protected static site's, the sign-in host's
+ * change-password page and the desktop's `/api/user-access/authorize`:
+ * the {@link signInLocation}. A user surface's API keeps its own JSON 401
+ * (`/internal/lamaste/user-surface-401`), never a redirect.
+ *
+ * One redirect for all: Authelia's own answer (its `Location`) is built
  * from the URL it was asked about, which no longer carries the query
- * ({@link autheliaOriginalUrl}): taken as the redirect, it would send the
- * user back without it — the desktop's sign-in (`/api/user-access/authorize
- * ?challenge=…&nonce=…`) needs it.
+ * ({@link autheliaOriginalUrl}), and a redirect nginx writes itself
+ * (`?rd=https://<fqdn>$request_uri`) cannot encode the URL — an `&` in its
+ * query ended `rd`. The desktop's sign-in (`?challenge=…&nonce=…`) needs
+ * the whole query back.
  */
 const SIGN_IN_ON_401 = `error_page 401 = ${SIGN_IN_LOCATION};`;
 
 /**
  * The location a request without a session is sent to by
- * {@link SIGN_IN_ON_401}: Gatekeeper answers it with the redirect to the
- * sign-in of the host's domain, `rd` the full URL — query included, encoded
- * as one parameter — built from nginx's `$request_uri` (an internal
- * redirect keeps it) on the vhost's own hostname. Gatekeeper is sent no
- * cookie and decides nothing; it never asks Authelia.
+ * {@link SIGN_IN_ON_401}: Gatekeeper's `/authz/sign-in/<domain>/<fqdn>`
+ * answers with the redirect to `auth.<domain>`, `rd` the full URL — query
+ * included, encoded as one parameter — built from nginx's `$request_uri`
+ * (an internal redirect keeps it) on the vhost's own hostname. The domain
+ * is the generator's, so Gatekeeper needs no projection; it is sent no
+ * cookie, decides nothing and never asks Authelia. Gatekeeper must be up
+ * for the redirect, as it must for a tunnel's authorization.
  *
- * @param {string} fqdn
+ * @param {string} fqdn the vhost's hostname
+ * @param {string} domain the domain whose sign-in it uses
  */
-function signInLocation(fqdn) {
+function signInLocation(fqdn, domain) {
+  assertLiteralHostname(domain);
   return `
     # No session: the redirect to the domain's sign-in, back to this very
     # URL with its query (Gatekeeper builds it; Authelia never sees the query)
@@ -487,7 +504,7 @@ function signInLocation(fqdn) {
         internal;
         auth_request off;
 
-        proxy_pass http://127.0.0.1:9294/authz/sign-in/${fqdn};
+        proxy_pass http://127.0.0.1:9294/authz/sign-in/${domain}/${fqdn};
         proxy_pass_request_body off;
 
         proxy_set_header Content-Length "";
@@ -1250,7 +1267,7 @@ limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
         proxy_set_header X-Forwarded-Proto $scheme;${PANEL_ASSERTION_CLEARED}
         client_max_body_size 16k;
     }
-${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${signInLocation(fqdn)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
+${nativeBrokerLocations(fqdn)}${delegatedInvitationsLocations(domain, fqdn)}${accountLocations(domain, fqdn)}${signInLocation(fqdn, domain)}${primary ? mailCallbackLocation(fqdn) : ''}${userAccess}${authBrandLocations(domain, fqdn, language)}
     # Default — proxy to Authelia. Authelia takes the OIDC issuer and the
     # session cookie's domain from X-Forwarded-Host / -Proto: this portal's
     # own name, never what the client sent. (A location that sets any
@@ -1541,7 +1558,7 @@ function userSurfaceLocations(fqdn, userSurface) {
     const block = `{
         auth_request /internal/lamaste/user-surface-authz;
         auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
-        auth_request_set $lamaste_refusal $upstream_http_x_lamalibre_refusal;
+        auth_request_set $user_surface_refusal $upstream_http_x_lamalibre_refusal;
 
         # The user, vouched for by Gatekeeper to the panel for this one request
         proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
@@ -1580,7 +1597,7 @@ ${USER_SURFACE_PROXY_HEADERS}
         default_type application/json;
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options "nosniff" always;
-        if ($lamaste_refusal = not_a_member) {
+        if ($user_surface_refusal = not_a_member) {
             return 403 '{"error":"not_a_member"}';
         }
         return 403 '{"error":"forbidden"}';
@@ -1599,7 +1616,7 @@ ${USER_SURFACE_PROXY_HEADERS}
         internal;
         auth_request off;${BODY_NOT_READ}
         # A native app's bearer token Gatekeeper refused: the app refreshes it
-        if ($lamaste_refusal = invalid_token) {
+        if ($user_surface_refusal = invalid_token) {
             rewrite ^ /internal/lamaste/user-surface-invalid-token last;
         }
 
@@ -1905,7 +1922,6 @@ function buildGatekeeperVhost(
   domain,
   { pathPrefix, maxBodySizeMb, userSurface = [], native = null, nativeGuard = false } = {},
 ) {
-  const url = originalUrl(fqdn);
   return `server {
     listen 443 ssl;
     ${ACCESS_LOG_DIRECTIVE}
@@ -1925,7 +1941,7 @@ ${bodySizeDirective(maxBodySizeMb)}
         proxy_buffers 4 32k;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
     }
-${userSurfaceLocations(fqdn, userSurface)}${nativeAppLocations(native, domain)}
+${userSurfaceLocations(fqdn, userSurface)}${nativeAppLocations(native, domain)}${signInLocation(fqdn, domain)}
     location / {
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
@@ -1962,8 +1978,8 @@ ${TUNNEL_PROXY_HEADERS}${native || nativeGuard ? NATIVE_BACKEND_GUARD : ''}
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login, back to this vhost
-        error_page 401 =302 https://auth.${domain}/?rd=${url};
+        # No session -> the domain's sign-in, back to this very URL, query included
+        ${SIGN_IN_ON_401}
 
         # Authorization failure -> Gatekeeper's inline page: the access
         # request of a restricted tunnel, or not a member of this domain
@@ -2135,7 +2151,7 @@ export function renderStaticSiteVhost(site, certDir, domain) {
 
         proxy_http_version 1.1;
     }
-${signInLocation(site.fqdn)}`;
+${signInLocation(site.fqdn, domain)}`;
     locationAuthDirectives = `
         # Clear client-supplied identity headers (Authelia re-injects on success)
         proxy_set_header Remote-User "";
@@ -2381,20 +2397,19 @@ ${nativeAppLocations(native, domain)}${unavailablePageLocations(domain, clear)}
     };
   }
 
-  const url = originalUrl(site.fqdn);
   const config = `${head}
     root ${treesDir}/current;
     index index.html;
 
     # Every path of the shell: Gatekeeper first (the API's locations ask on their own)
     auth_request /internal/lamaste/shell-authz;
-    error_page 401 =302 https://auth.${domain}/?rd=${url};
+    ${SIGN_IN_ON_401}
     error_page 403 = /internal/lamaste/shell-authz;
 
     location = /internal/lamaste/shell-authz {
         ${gatekeeperSubrequest('user-surface-shell', site.fqdn)}
     }
-${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }, ...joined])}${nativeAppLocations(native, domain)}
+${signInLocation(site.fqdn, domain)}${userSurfaceLocations(site.fqdn, [{ route, maxBodySizeMb }, ...joined])}${nativeAppLocations(native, domain)}
     # A script, style, font or image the current tree lacks: the previous
     # tree's (a page still running the old shell), else 404
     location ~* ${WEB_SURFACE_SUBRESOURCE_RE} {

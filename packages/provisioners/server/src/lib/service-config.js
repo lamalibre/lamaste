@@ -471,8 +471,8 @@ export function generateHttpRedirectVhost() {
   return `# Managed by Lamaste — plain HTTP is redirected to HTTPS.
 server {
     listen 80 default_server;
-    server_name _;
     ${ACCESS_LOG_DIRECTIVE}
+    server_name _;
     return 301 https://$host$request_uri;
 }
 `;

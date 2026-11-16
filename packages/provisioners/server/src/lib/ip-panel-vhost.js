@@ -37,8 +37,8 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 9292 ssl;
-    server_name _;
     ${ACCESS_LOG_DIRECTIVE}
+    server_name _;
 
     ssl_certificate ${pkiDir}/self-signed.pem;
     ssl_certificate_key ${pkiDir}/self-signed-key.pem;

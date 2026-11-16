@@ -983,3 +983,23 @@ test('a protected static site under none of the relay domains renders closed, an
   assert.equal(notices[0].level, 'warning');
   assert.match(notices[0].message, /docs\.customer\.example/);
 });
+
+test('a vhost left as it is says whether it keeps the combined log with queries', async () => {
+  // Restricted in state, public on disk — and written before the access log.
+  const restrictedApp = { ...app, accessMode: 'restricted' };
+  const publicVhost = withoutAccessLog(
+    renderTunnelVhost('public', 'app.example.com', 'example.com', 9402, WILDCARD).config,
+  );
+  const { deps, writes } = fakeDeps(
+    { 'lamalibre-lamaste-app-app.example.com': publicVhost },
+    { tunnels: [restrictedApp] },
+  );
+  const warnings = [];
+  const result = await reconcileTunnelVhosts(
+    { info() {}, error() {}, warn: (o, m) => warnings.push([o, m]) },
+    deps,
+  );
+  assert.deepEqual(writes, []);
+  assert.equal(result.skipped[0].logsQueries, true);
+  assert.match(warnings[0][1], /keep nginx's combined access log, query strings and referrers/);
+});

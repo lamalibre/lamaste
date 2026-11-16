@@ -136,6 +136,40 @@ for (const [name, text] of Object.entries(refused)) {
   });
 }
 
+/** The variables of create-lamaste's http-level files are never a vhost's to set. */
+const settingRootVariable = {
+  'a map onto $lamaste_request_path':
+    'map $request_uri $lamaste_request_path {\n default $request_uri;\n}\n' + server(''),
+  'a map onto $lamaste_backend_cookie':
+    'map $http_cookie $lamaste_backend_cookie {\n default $http_cookie;\n}\n' + server(''),
+  'a map onto a $lamaste_ variable in another case':
+    'map $request_uri $LAMASTE_request_path {\n default $request_uri;\n}\n' + server(''),
+  'auth_request_set of $lamaste_request_path': location(
+    '  auth_request_set $lamaste_request_path $upstream_http_x;',
+  ),
+  'auth_request_set of any $lamaste_ variable': location(
+    '  auth_request_set $lamaste_anything $upstream_http_x;',
+  ),
+  'a named capture in a location': server(
+    ' location ~ ^/(?<lamaste_request_path>.*)$ {\n  return 204;\n }',
+  ),
+  'a Python-style named capture in a location': server(
+    ' location ~ ^/(?P<lamaste_request_path>.*)$ {\n  return 204;\n }',
+  ),
+  'a quoted named capture in an if': location(
+    '  if ($request_uri ~ "^(?\'lamaste_request_path\'[^?]*)" ) {\n   return 204;\n  }',
+  ),
+  'a named capture in a rewrite': location('  rewrite ^/(?<lamaste_request_path>.*)$ /x last;'),
+  'a named capture in a map key':
+    'map $request_uri $other {\n "~^(?<lamaste_request_path>[^?]*)" $1;\n}\n' + server(''),
+};
+
+for (const [name, text] of Object.entries(settingRootVariable)) {
+  test(`refuses a vhost with ${name}`, () => {
+    assert.throws(() => validateVhost(text), /a vhost may not set a \$lamaste_ variable/);
+  });
+}
+
 test('accepts a minimal TLS proxy vhost, comments with any text included', () => {
   validateVhost(
     `# Managed by Lamaste — généré\nserver {\n listen 443 ssl;\n server_name a.example.com;\n` +
@@ -147,6 +181,18 @@ test('accepts a minimal TLS proxy vhost, comments with any text included', () =>
 
 test('accepts access_log off in a location — and nothing else of it', () => {
   validateVhost(location('  access_log off;\n  proxy_pass http://127.0.0.1:3100;'));
+});
+
+test('a vhost may read the root-defined $lamaste_ variables and set its own others', () => {
+  validateVhost(
+    'map $request_uri $site_path {\n "~^(?<site_part>[^?]*)" $site_part;\n}\n' +
+      location(
+        '  auth_request_set $user_surface_refusal $upstream_http_x_lamalibre_refusal;\n' +
+          '  proxy_set_header X-Original-URL https://a.example.com$lamaste_request_path;\n' +
+          '  proxy_set_header Cookie $lamaste_backend_cookie;\n' +
+          '  proxy_pass http://127.0.0.1:3100;',
+      ),
+  );
 });
 
 test('accepts the relay access log at server level — that file, that format, nothing more', () => {
@@ -170,7 +216,7 @@ test('accepts a user surface’s JSON refusal: a media type and a fixed body', (
   validateVhost(
     location(
       '  internal;\n  default_type application/json;\n' +
-        '  if ($lamaste_refusal = not_a_member) {\n   return 403 \'{"error":"not_a_member"}\';\n  }\n' +
+        '  if ($user_surface_refusal = not_a_member) {\n   return 403 \'{"error":"not_a_member"}\';\n  }\n' +
         '  return 403 \'{"error":"forbidden"}\';',
     ),
   );
@@ -189,7 +235,7 @@ test('accepts a native app’s locations: no access log, an alias under the web 
         '  add_header WWW-Authenticate \'Bearer error="invalid_token"\' always;\n' +
         '  return 401 \'{"error":"invalid_token"}\';\n }\n' +
         ' location = /internal/lamaste/user-surface-401 {\n' +
-        '  if ($lamaste_refusal = invalid_token) {\n   rewrite ^ /internal/lamaste/user-surface-invalid-token last;\n  }\n }',
+        '  if ($user_surface_refusal = invalid_token) {\n   rewrite ^ /internal/lamaste/user-surface-invalid-token last;\n  }\n }',
     ),
   );
 });

@@ -55,7 +55,7 @@
  * reconcile renders them.
  */
 
-import { domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
+import { ACCESS_LOG_DIRECTIVE, domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
 import { tunnelHost, vhostTunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
 import {
   LEGACY_AUTH_VHOST,
@@ -161,6 +161,11 @@ function authenticates(config) {
   return /^\s*auth_request\s/m.test(config);
 }
 
+/** True when `config` lacks the relay's access log: nginx's combined log, queries included, applies. */
+function logsQueries(config) {
+  return !config.includes(ACCESS_LOG_DIRECTIVE);
+}
+
 function newResult() {
   return { rewritten: [], unchanged: 0, skipped: [], failed: [] };
 }
@@ -190,14 +195,21 @@ async function reconcileOne(
       if (reportMissing) result.skipped.push({ vhost: label, reason: 'no vhost installed' });
       return;
     }
+    // A vhost left as it is keeps what it logs: said with the skip.
+    const skip = (reason) =>
+      result.skipped.push({
+        vhost: label,
+        reason,
+        ...(logsQueries(installed) ? { logsQueries: true } : {}),
+      });
     const certDir = vhostCertDir(installed);
     if (!certDir) {
-      result.skipped.push({ vhost: label, reason: 'installed vhost names no certificate' });
+      skip('installed vhost names no certificate');
       return;
     }
     const expected = render(certDir);
     if (!expected) {
-      result.skipped.push({ vhost: label, reason: 'state cannot be rendered' });
+      skip('state cannot be rendered');
       return;
     }
     if (expected.config === installed) {
@@ -205,11 +217,9 @@ async function reconcileOne(
       return;
     }
     if (keepAuthentication && authenticates(expected.config) !== authenticates(installed)) {
-      result.skipped.push({
-        vhost: label,
-        reason:
-          'installed vhost and state disagree on whether it authenticates; reconfigure it to rewrite the vhost',
-      });
+      skip(
+        'installed vhost and state disagree on whether it authenticates; reconfigure it to rewrite the vhost',
+      );
       return;
     }
     await deps.installVhost(expected.name, expected.config, expected.fqdn, {
@@ -231,7 +241,10 @@ function logResult(log, what, result) {
     log.info({ rewritten: result.rewritten }, `Rewrote ${what} vhosts`);
   }
   if (result.skipped.length > 0) {
-    log.warn({ skipped: result.skipped }, `Left ${what} vhosts as they are`);
+    const logging = result.skipped.some((s) => s.logsQueries)
+      ? " — those marked logsQueries keep nginx's combined access log, query strings and referrers included"
+      : '';
+    log.warn({ skipped: result.skipped }, `Left ${what} vhosts as they are${logging}`);
   }
   for (const failure of result.failed) {
     log.error(failure, `Failed to rewrite ${what} vhost; the previous vhost was restored`);

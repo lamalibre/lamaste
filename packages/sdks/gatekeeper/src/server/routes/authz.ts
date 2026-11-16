@@ -36,7 +36,7 @@ import {
   buildForbiddenPage,
 } from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
-import { autheliaTargetUrl, isOriginalUrlOn, signInRedirectUrl } from '../../lib/original-url.js';
+import { autheliaTargetUrl, isAnchoredOn, signInRedirectUrl } from '../../lib/original-url.js';
 import type { AutheliaSession, TemplateOptions, TunnelInfo } from '../../lib/types.js';
 
 /**
@@ -430,36 +430,48 @@ export async function authzRoutes(
   );
 
   /**
-   * GET /authz/sign-in/:fqdn — where a location that asks Authelia directly
-   * (an Authelia-protected static site, the sign-in host's password change
-   * and the desktop's `/api/user-access/authorize`) sends a request without
-   * a session (nginx `error_page 401`). Those locations tell Authelia the
-   * URL without its query, so Authelia's own redirect would bring the user
-   * back without it: this one carries `X-Original-URL` — nginx's
-   * `https://<fqdn>$request_uri`, the vhost naming its host in the path as
-   * for `/authz/refusal/:fqdn` — whole, encoded as `rd`, to the sign-in of
-   * the host's domain. Decides nothing and reads no session: 302, or 403
-   * when the URL is not on the host or the host is under none of the
-   * relay's domains.
+   * GET /authz/sign-in/:domain/:fqdn — where a location sends a request
+   * without a session (nginx `error_page 401`): the pages of a tunnel, a
+   * plugin's web-surface shell, an Authelia-protected static site, the
+   * sign-in host's password change and the desktop's
+   * `/api/user-access/authorize`. The vhost names the host's domain and the
+   * host in the path — its generator knows both — and `X-Original-URL` is
+   * nginx's `https://<fqdn>$request_uri`, the request target as the client
+   * sent it. The answer is a 302 to the sign-in of that domain with the
+   * whole URL, query included, encoded as one `rd` (an `&` in the query no
+   * longer ends it; the locations asking Authelia directly tell it the path
+   * alone, so Authelia's own redirect would lose the query).
+   *
+   * Decides nothing, reads no session, reads no projection: 403 when the
+   * host is not the domain or under it, or when `X-Original-URL` or `Host`
+   * names another host than the path (as for every route here).
    */
-  fastify.get<{ Params: { fqdn: string } }>(
-    '/authz/sign-in/:fqdn',
+  fastify.get<{ Params: { domain: string; fqdn: string } }>(
+    '/authz/sign-in/:domain/:fqdn',
     { config: authzRateLimit },
     async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
-      const { fqdn } = request.params;
+      const { domain, fqdn } = request.params;
       const refuse = (reason: string): FastifyReply => {
         request.log.info({ requestId: request.id, reason, fqdn }, 'sign-in redirect refused');
         return reply.code(403).send();
       };
-      if (!TUNNEL_FQDN_RE.test(fqdn)) return refuse('invalid_host');
-      const originalUrl = request.headers['x-original-url'];
-      if (typeof originalUrl !== 'string' || !isOriginalUrlOn(originalUrl, fqdn)) {
-        return refuse('invalid_original_url');
+      if (!TUNNEL_FQDN_RE.test(domain) || !TUNNEL_FQDN_RE.test(fqdn)) {
+        return refuse('invalid_host');
       }
-      const domain = domainShownFor(fastify, fqdn);
-      if (!domain) return refuse('unknown_domain');
-      return reply.code(302).header('Location', signInRedirectUrl(domain, originalUrl)).send();
+      const portalDomain = domain.toLowerCase();
+      if (domainOfHost(fqdn, [portalDomain]) !== portalDomain) return refuse('not_under_domain');
+      const originalUrl = request.headers['x-original-url'];
+      if (typeof originalUrl !== 'string') return refuse('missing_original_request');
+      const parsed = parseOriginalUrl(originalUrl);
+      if (!parsed) return refuse('invalid_original_url');
+      const mismatch = hostnameMismatch(request, fqdn, parsed.host);
+      if (mismatch) return refuse(mismatch.reason);
+      if (!isAnchoredOn(originalUrl, fqdn)) return refuse('invalid_original_url');
+      return reply
+        .code(302)
+        .header('Location', signInRedirectUrl(portalDomain, originalUrl))
+        .send();
     },
   );
 
@@ -582,8 +594,8 @@ async function refusedSession(
 }
 
 /**
- * The domain `hostname` is under — of the panel's projection; `hostname`
- * itself when the projection names none for it (or is unreadable).
+ * The domain `hostname` is under, of the panel's projection — or null when
+ * the projection names none for it, or is missing or unreadable.
  */
 function domainShownFor(fastify: FastifyInstance, hostname: string): string | null {
   const index = fastify.getDomains();

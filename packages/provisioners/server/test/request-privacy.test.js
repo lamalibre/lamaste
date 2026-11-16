@@ -22,6 +22,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { generateIpPanelVhost } from '../src/lib/ip-panel-vhost.js';
+import { generateHttpRedirectVhost, generateHttpsDefaultVhost } from '../src/lib/service-config.js';
 import {
   ACCESS_LOG_DIRECTIVE,
   ACCESS_LOG_FILE,
@@ -54,6 +56,17 @@ test('the file: the map and the format the vhosts name, nothing that could keep 
   assert.ok(format.includes(REQUEST_PATH_VARIABLE));
   // The capture is positional: a named one would define a variable everywhere.
   assert.doesNotMatch(CONF, /\(\?P?</);
+});
+
+test("the installer's own sites log as the panel's do: once, right after listen", () => {
+  for (const [name, text] of [
+    ['IP panel', generateIpPanelVhost('/etc/lamalibre/lamaste/pki')],
+    ['port-80 redirect', generateHttpRedirectVhost()],
+    ['443 catch-all', generateHttpsDefaultVhost()],
+  ]) {
+    assert.equal(text.split(ACCESS_LOG_DIRECTIVE).length - 1, 1, name);
+    assert.match(text, new RegExp(`\\n {4}listen [^\\n]*;\\n {4}${ACCESS_LOG_DIRECTIVE}\\n`), name);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -205,6 +218,123 @@ test(
         () => '',
       );
       assert.equal(combined, '', 'the http-level log is replaced, not added to');
+    } finally {
+      server.kill('SIGTERM');
+      await new Promise((resolve) => server.once('exit', resolve));
+      backend.close();
+      const errors = await readFile(path.join(prefix, 'logs', 'error.log'), 'utf-8').catch(
+        () => '',
+      );
+      await rm(prefix, { recursive: true, force: true });
+      assert.doesNotMatch(errors, /\[(?:emerg|alert|crit)\]/, errors);
+    }
+  },
+);
+
+test(
+  'nginx itself: Authelia is asked about the path, the sign-in gets the whole URL, the log neither query',
+  { skip: nginxBinary ? false : 'no nginx binary on the PATH' },
+  async () => {
+    const prefix = await mkdtemp(path.join(tmpdir(), 'lamaste-sign-in-'));
+    // Stand-ins: Authelia's auth-request (no session: 401) and Gatekeeper's
+    // sign-in redirect (here: the URL it was given, as the body).
+    const askedAuthelia = [];
+    const backend = http.createServer((req, res) => {
+      if (req.url === '/api/authz/auth-request') {
+        askedAuthelia.push(req.headers['x-original-url']);
+        res.writeHead(401, { 'content-length': '0' });
+        res.end();
+        return;
+      }
+      const body = Buffer.from(
+        JSON.stringify({ path: req.url, originalUrl: req.headers['x-original-url'] ?? null }),
+      );
+      res.writeHead(200, { 'content-length': String(body.length) });
+      res.end(body);
+    });
+    await new Promise((resolve) => backend.listen(0, '127.0.0.1', resolve));
+    const upstream = `http://127.0.0.1:${backend.address().port}`;
+    const port = await freePort();
+    const accessLog = path.join(prefix, 'logs', 'access.log');
+    await mkdir(path.join(prefix, 'logs'));
+    await writeFile(path.join(prefix, 'request-privacy.conf'), CONF);
+    const conf = path.join(prefix, 'nginx.conf');
+    // The locations as the panel writes them for a protected static site
+    // (serverd nginx.js: autheliaOriginalUrl, signInLocation, SIGN_IN_ON_401).
+    await writeFile(
+      conf,
+      [
+        'worker_processes 1;',
+        `pid ${path.join(prefix, 'nginx.pid')};`,
+        `error_log ${path.join(prefix, 'logs', 'error.log')};`,
+        'events { worker_connections 64; }',
+        'http {',
+        `  client_body_temp_path ${path.join(prefix, 'tmp-body')};`,
+        `  proxy_temp_path ${path.join(prefix, 'tmp-proxy')};`,
+        `  fastcgi_temp_path ${path.join(prefix, 'tmp-fcgi')};`,
+        `  uwsgi_temp_path ${path.join(prefix, 'tmp-uwsgi')};`,
+        `  scgi_temp_path ${path.join(prefix, 'tmp-scgi')};`,
+        `  include ${path.join(prefix, 'request-privacy.conf')};`,
+        '  server {',
+        `    listen 127.0.0.1:${port};`,
+        `    ${ACCESS_LOG_DIRECTIVE.replace(ACCESS_LOG_FILE, accessLog)}`,
+        '    location /internal/authelia/authz {',
+        '      internal;',
+        `      proxy_pass ${upstream}/api/authz/auth-request;`,
+        '      proxy_pass_request_body off;',
+        '      proxy_set_header Content-Length "";',
+        `      proxy_set_header X-Original-URL https://docs.example.com${REQUEST_PATH_VARIABLE};`,
+        '    }',
+        '    location = /internal/lamaste/sign-in {',
+        '      internal;',
+        '      auth_request off;',
+        `      proxy_pass ${upstream}/authz/sign-in/example.com/docs.example.com;`,
+        '      proxy_pass_request_body off;',
+        '      proxy_set_header Content-Length "";',
+        '      proxy_set_header X-Original-URL https://docs.example.com$request_uri;',
+        '    }',
+        '    location / {',
+        '      auth_request /internal/authelia/authz;',
+        // Never reached without a session (a `return` would run before the check).
+        `      proxy_pass ${upstream}/content;`,
+        '    }',
+        '    error_page 401 = /internal/lamaste/sign-in;',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    const check = spawnSync(nginxBinary, ['-t', '-p', prefix, '-c', conf], { encoding: 'utf-8' });
+    assert.equal(check.status, 0, check.stderr);
+    const server = spawn(nginxBinary, ['-p', prefix, '-c', conf, '-g', 'daemon off;'], {
+      stdio: 'ignore',
+    });
+    try {
+      for (let i = 0; i < 100; i += 1) {
+        const up = await new Promise((resolve) => {
+          const s = net.connect(port, '127.0.0.1', () => {
+            s.end();
+            resolve(true);
+          });
+          s.on('error', () => resolve(false));
+        });
+        if (up) break;
+        await sleep(50);
+      }
+      const target = '/reports/2026?user=someone%40example.test&tab=a&b=c';
+      const answer = JSON.parse(await rawRequest(port, `GET ${target} HTTP/1.1`));
+      // The sign-in redirect gets the whole URL, query and every `&` included.
+      assert.deepEqual(answer, {
+        path: '/authz/sign-in/example.com/docs.example.com',
+        originalUrl: `https://docs.example.com${target}`,
+      });
+      // Authelia was asked about the path alone.
+      assert.deepEqual(askedAuthelia, ['https://docs.example.com/reports/2026']);
+      // The log: the path the client asked for, never its query.
+      const lines = (await readFile(accessLog, 'utf-8')).trim().split('\n');
+      assert.equal(lines.length, 1, lines.join('\n'));
+      assert.match(lines[0], /"GET \/reports\/2026 HTTP\/1\.1" 200 /);
+      assert.ok(!lines[0].includes('someone') && !lines[0].includes('tab='), lines[0]);
     } finally {
       server.kill('SIGTERM');
       await new Promise((resolve) => server.once('exit', resolve));

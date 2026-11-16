@@ -18,11 +18,14 @@
  *   same file in {@link ACCESS_LOG_FORMAT}.
  * - **Authelia.** Asked about a URL (`X-Original-URL` on
  *   `/api/authz/auth-request`), Authelia logs it at `info` whenever it
- *   refuses a signed-in user — into the journal. Lamaste's access-control
- *   rules decide by host and subject only (no `resources` rules), so the
- *   locations that ask Authelia directly tell it `https://<host>` +
- *   {@link REQUEST_PATH_VARIABLE}. (Gatekeeper, which also asks Authelia,
- *   cuts the query itself.)
+ *   refuses a signed-in user — into its log file,
+ *   `/var/log/authelia/authelia.log` (`log.file_path`). Lamaste's
+ *   access-control rules decide by host and subject only (no `resources`
+ *   rules), so Authelia is no longer asked about a query: the locations
+ *   that ask it directly send `https://<host>` + {@link REQUEST_PATH_VARIABLE},
+ *   and Gatekeeper, which also asks it, cuts the query itself. (The sign-in
+ *   redirect still hands the whole URL to Authelia's portal as `rd`, which
+ *   Authelia logs at `debug` only.)
  *
  * Both read {@link REQUEST_PATH_VARIABLE}, defined by the http-level file
  * {@link renderRequestPrivacyConf} renders — installed by create-lamaste as
@@ -50,6 +53,13 @@ export const REQUEST_PRIVACY_FILE = '/etc/nginx/conf.d/lamalibre-lamaste-request
  * line keeps its shape and Authelia gets a URL it can parse), and not
  * changed by an internal redirect (`error_page`, `try_files`, a `rewrite`),
  * unlike `$uri`. Empty for a request nginx could not parse.
+ *
+ * **Captures.** It is a regex `map` with a positional capture, and nginx
+ * stores a map's captures on the request that evaluates it — overwriting
+ * that request's `$1`…`$9`. Evaluate it only where nothing reads its own
+ * captures afterwards: in an authorization subrequest (a request of its
+ * own) and in the access log (after the response). A location of the main
+ * request that uses `$1` must never name it before reading them.
  */
 export const REQUEST_PATH_VARIABLE = '$lamaste_request_path';
 

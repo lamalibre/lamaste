@@ -50,6 +50,7 @@ import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
 import { startIdentityServices, stopIdentityServices } from './lib/identity-sync.js';
 import { startPeerServices, stopPeerServices } from './lib/peer-runtime.js';
 import { startHttpsCatchAllCheck, stopHttpsCatchAllCheck } from './lib/https-catch-all.js';
+import { startRequestPrivacyCheck, stopRequestPrivacyCheck } from './lib/request-privacy-check.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import {
@@ -350,7 +351,12 @@ async function start() {
       })
       // Plugins' web surfaces: each approved tree served (a redeploy may
       // have reset the web root), each site's vhost in line.
-      .then(() => reconcileWebSurfaces(server.log));
+      .then(() => reconcileWebSurfaces(server.log))
+      // Then whether every enabled vhost logs without queries, and the
+      // installer's file is there — raised to the administrators if not.
+      .finally(() => startRequestPrivacyCheck(server.log));
+  } else {
+    startRequestPrivacyCheck(server.log);
   }
 
   // --- Mail: every transport checked now and every 6 hours, sending nothing
@@ -407,6 +413,7 @@ async function start() {
     stopIdentityServices();
     stopPeerServices();
     stopHttpsCatchAllCheck();
+    stopRequestPrivacyCheck();
     stopHostedPluginHealthMonitor();
     stopMailHealthMonitor();
     await stopSubmissionListener().catch(() => {});

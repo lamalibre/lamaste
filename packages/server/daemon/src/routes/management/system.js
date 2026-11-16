@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { z } from 'zod';
 import { getSystemStats } from '../../lib/system-stats.js';
 import { httpsCatchAllStatus } from '../../lib/https-catch-all.js';
+import { requestPrivacyStatus } from '../../lib/request-privacy-check.js';
 import { getConfig } from '../../lib/config.js';
 import { setPluginCapabilities } from '../../lib/mtls.js';
 import { getPluginCapabilities } from '../../lib/plugins.js';
@@ -69,8 +70,13 @@ export default async function systemRoutes(fastify, _opts) {
     async (request, reply) => {
       try {
         const stats = await getSystemStats(request.log);
-        // Whether the port-443 catch-all is in place (the Dashboard warns when not).
-        return { ...stats, httpsCatchAll: httpsCatchAllStatus() };
+        // Whether the port-443 catch-all is in place (the Dashboard warns when
+        // not), and whether every enabled vhost logs without queries.
+        return {
+          ...stats,
+          httpsCatchAll: httpsCatchAllStatus(),
+          requestPrivacy: requestPrivacyStatus(),
+        };
       } catch {
         return reply.code(500).send({ error: 'Failed to retrieve system stats' });
       }

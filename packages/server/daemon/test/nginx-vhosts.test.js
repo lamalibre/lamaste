@@ -286,12 +286,13 @@ test('authorization subrequests name the vhost’s own hostname, never the clien
       `${app}: X-Original-URL names the tunnel`,
     );
     assert.ok(authz.includes(`proxy_set_header Host ${fqdn};`), `${app}: Host names the tunnel`);
+    // No session: Gatekeeper's sign-in redirect, back to the whole URL —
+    // never one nginx writes, which could not encode it.
     assert.ok(
-      locationBody(text, '/').includes(
-        `error_page 401 =302 https://auth.example.com/?rd=https://${fqdn}$request_uri;`,
-      ),
+      locationBody(text, '/').includes('error_page 401 = /internal/lamaste/sign-in;'),
       `${app}: the login redirect returns to the tunnel`,
     );
+    assertSignIn(text, fqdn, 'example.com');
   }
 
   const site = await readFile(
@@ -308,7 +309,7 @@ test('authorization subrequests name the vhost’s own hostname, never the clien
     ),
   );
   assert.ok(siteAuthz.includes('proxy_set_header X-Forwarded-Host "";'));
-  assertSignIn(site, 'docs.example.com');
+  assertSignIn(site, 'docs.example.com', 'example.com');
   assert.match(site, /^ {4}error_page 401 = \/internal\/lamaste\/sign-in;$/m);
 
   const auth = await readFile(path.join(captured, 'lamalibre-lamaste-auth-example.com'), 'utf8');
@@ -317,24 +318,24 @@ test('authorization subrequests name the vhost’s own hostname, never the clien
       'proxy_set_header X-Original-URL https://auth.example.com$lamaste_request_path;',
     ),
   );
-  assertSignIn(auth, 'auth.example.com');
+  assertSignIn(auth, 'auth.example.com', 'example.com');
   const authorize = locationBody(auth, '/api/user-access/authorize');
   assert.match(authorize, /error_page 401 = \/internal\/lamaste\/sign-in;/);
   assert.doesNotMatch(authorize, /redirection_url/);
 });
 
 /**
- * The location a request without a session goes to where Authelia is asked
- * directly: Gatekeeper's sign-in redirect, named by the vhost's own
- * hostname, with the whole URL (`$request_uri`, query included) and nothing
- * of the browser's credentials.
+ * The location a page without a session goes to: Gatekeeper's sign-in
+ * redirect, named by the vhost's domain and own hostname, with the whole URL
+ * (`$request_uri`, query included) and nothing of the browser's
+ * credentials. No redirect nginx writes itself, none Authelia builds.
  */
-function assertSignIn(text, fqdn) {
+function assertSignIn(text, fqdn, domain) {
   const body = locationBody(text, '= /internal/lamaste/sign-in');
   for (const line of [
     'internal;',
     'auth_request off;',
-    `proxy_pass http://127.0.0.1:9294/authz/sign-in/${fqdn};`,
+    `proxy_pass http://127.0.0.1:9294/authz/sign-in/${domain}/${fqdn};`,
     `proxy_set_header X-Original-URL https://${fqdn}$request_uri;`,
     `proxy_set_header Host ${fqdn};`,
     'proxy_set_header Cookie "";',
@@ -344,7 +345,57 @@ function assertSignIn(text, fqdn) {
     assert.ok(body.includes(line), `${fqdn}: ${line}`);
   }
   assert.doesNotMatch(text, /redirection_url/, `${fqdn}: never Authelia's own redirect`);
+  assert.doesNotMatch(text, /\?rd=/, `${fqdn}: never a redirect nginx writes`);
 }
+
+test('one sign-in redirect for every page without a session; a user surface API keeps its JSON 401', () => {
+  const { config: shell } = nginx.renderWebSurfaceVhost(
+    { id: 'demo-site', fqdn: 'app.beta.example' },
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo', served: true },
+  );
+  // The shell asks Gatekeeper at server level; a page without a session
+  // goes to the sign-in, the sign-in location itself asks nothing.
+  assert.match(shell, /^ {4}error_page 401 = \/internal\/lamaste\/sign-in;$/m);
+  assertSignIn(shell, 'app.beta.example', 'beta.example');
+  const { config: tunnel } = nginx.renderTunnelVhost(
+    'restricted',
+    'piyasa.example.com',
+    'example.com',
+    20014,
+    undefined,
+    { userSurface: [{ route: 'fx', maxBodySizeMb: 10 }] },
+  );
+  assertSignIn(tunnel, 'piyasa.example.com', 'example.com');
+  for (const [text, route] of [
+    [shell, 'demo'],
+    [tunnel, 'fx'],
+  ]) {
+    // The API an application calls: JSON, never a redirect to a page.
+    for (const matcher of [`= /api/${route}/app`, `^~ /api/${route}/app/`]) {
+      const body = locationBody(text, matcher);
+      assert.match(body, /error_page 401 = \/internal\/lamaste\/user-surface-401;/, matcher);
+      assert.doesNotMatch(body, /sign-in/, matcher);
+    }
+    assert.match(
+      locationBody(text, '= /internal/lamaste/user-surface-401'),
+      /proxy_pass http:\/\/127\.0\.0\.1:9294\/authz\/user-surface-unauthenticated;/,
+    );
+    assert.doesNotThrow(() => validateVhost(text));
+  }
+  // Not served: no page asks for a session, no sign-in location.
+  const { config: closed } = nginx.renderWebSurfaceVhost(
+    { id: 'demo-site', fqdn: 'app.beta.example' },
+    '/etc/letsencrypt/live/app.beta.example',
+    'beta.example',
+    { route: 'demo', maxBodySizeMb: 10, treesDir: '/var/www/lamaste/apps/demo', served: false },
+  );
+  assert.doesNotMatch(closed, /sign-in/);
+  // A public tunnel asks for nothing either.
+  const { config: open } = nginx.renderTunnelVhost('public', 'open.example.com', 'example.com', 1);
+  assert.doesNotMatch(open, /sign-in|error_page 401/);
+});
 
 test('every server block logs the path, never the query: the relay access log, once, at server level', async () => {
   const texts = [];
@@ -401,6 +452,12 @@ test('every server block logs the path, never the query: the relay access log, o
       text.split(ACCESS_LOG_DIRECTIVE).length - 1,
       inServer,
       `${name}: one directive per server block`,
+    );
+    // One place in every generator: right after the server's `listen`.
+    assert.equal(
+      text.match(/^ {4}listen [^\n]*;\n {4}access_log \S+ \S+;$/gm)?.length,
+      inServer,
+      `${name}: the directive follows listen`,
     );
     // The catch-all is the installer's (default_server): never the panel's to write.
     if (name !== 'https catch-all') assert.doesNotThrow(() => validateVhost(text), name);
@@ -491,7 +548,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
     'default_type application/json;',
     'add_header Cache-Control "no-store" always;',
     'add_header X-Content-Type-Options "nosniff" always;',
-    'if ($lamaste_refusal = not_a_member) {',
+    'if ($user_surface_refusal = not_a_member) {',
     `return 403 '{"error":"not_a_member"}';`,
     `return 403 '{"error":"forbidden"}';`,
   ]) {
@@ -534,7 +591,7 @@ test('a bound tunnel vhost serves each user surface through Gatekeeper to the pa
         'proxy_send_timeout 3600s;',
         'error_page 401 = /internal/lamaste/user-surface-401;',
         'error_page 403 = /internal/lamaste/user-surface-403;',
-        'auth_request_set $lamaste_refusal $upstream_http_x_lamalibre_refusal;',
+        'auth_request_set $user_surface_refusal $upstream_http_x_lamalibre_refusal;',
       ]) {
         assert.ok(body.includes(line), `${matcher}: ${line}`);
       }
@@ -972,11 +1029,8 @@ test('a Gatekeeper tunnel — authenticated too — and a protected site answer 
       20080,
     );
     assert.match(config, /error_page 403 = \/internal\/lamaste\/authz;/, accessMode);
-    assert.match(
-      config,
-      /error_page 401 =302 https:\/\/auth\.codelama\.com\.tr\/\?rd=https:\/\/workspace\.codelama\.com\.tr\$request_uri;/,
-      accessMode,
-    );
+    assert.match(config, /error_page 401 = \/internal\/lamaste\/sign-in;/, accessMode);
+    assertSignIn(config, 'workspace.codelama.com.tr', 'codelama.com.tr');
   }
   const site = await readFile(
     path.join(captured, 'lamalibre-lamaste-site-4f1d2c3a-1b2c-4d5e-8f90-123456789abc'),
@@ -1050,12 +1104,24 @@ function assertAsciiDirectives(text, label) {
 
 /**
  * A vhost without what keeping queries out of the logs added: the relay
- * access log of every server block, and — where Authelia is asked directly
- * — the path alone in `X-Original-URL` and Gatekeeper's sign-in redirect
- * instead of Authelia's own.
+ * access log of every server block, the path alone in `X-Original-URL`
+ * where Authelia is asked directly, Gatekeeper's sign-in redirect instead
+ * of Authelia's own or the one nginx wrote itself (`rd` unencoded — the
+ * vhost's `domain` and `fqdn` say which), and the user surface's refusal
+ * variable named outside the `$lamaste_` names root's files own.
+ *
+ * @param {string} text
+ * @param {{ domain: string, fqdn: string }} [nginxRedirect]
  */
-function withoutRequestPrivacy(text) {
-  return text
+function withoutRequestPrivacy(text, nginxRedirect) {
+  const restored = nginxRedirect
+    ? text.replaceAll(
+        '    error_page 401 = /internal/lamaste/sign-in;',
+        `    error_page 401 =302 https://auth.${nginxRedirect.domain}/?rd=https://${nginxRedirect.fqdn}$request_uri;`,
+      )
+    : text;
+  return restored
+    .replaceAll('$user_surface_refusal', '$lamaste_refusal')
     .replaceAll(`\n    ${ACCESS_LOG_DIRECTIVE}`, '')
     .replace(
       /\n {4}# No session: the redirect to the domain's sign-in[^\n]*\n[^\n]*\n {4}location = \/internal\/lamaste\/sign-in \{\n[\s\S]*?\n {4}\}\n/,
@@ -1212,7 +1278,10 @@ test('a served web surface keeps its 4.9.0 vhost but for its internal locations�
   assert.equal(now.match(BODY_NOT_READ_LINES)?.length, 5);
   assert.notEqual(now, before, 'the start’s reconcile rewrites it');
   assert.equal(
-    withoutRequestPrivacy(withoutBearerRefusal(now)).replace(BODY_NOT_READ_LINES, ''),
+    withoutRequestPrivacy(withoutBearerRefusal(now), {
+      domain: 'beta.example',
+      fqdn: 'app.beta.example',
+    }).replace(BODY_NOT_READ_LINES, ''),
     before,
   );
 });
@@ -1228,7 +1297,7 @@ function withoutBearerRefusal(text) {
       '',
     )
     .replace(
-      /\n {8}# A native app's bearer token Gatekeeper refused[^\n]*\n {8}if \(\$lamaste_refusal = invalid_token\) \{\n[^}]*\}/,
+      /\n {8}# A native app's bearer token Gatekeeper refused[^\n]*\n {8}if \(\$user_surface_refusal = invalid_token\) \{\n[^}]*\}/,
       '',
     );
 }
@@ -1436,7 +1505,7 @@ test('a bound route not served is answered by nginx, never by the tunnel; a refu
     /auth_request \/internal\/lamaste\/user-surface-authz;/,
   );
   const unauth = locationBody(config, '= /internal/lamaste/user-surface-401');
-  assert.match(unauth, /if \(\$lamaste_refusal = invalid_token\) \{/);
+  assert.match(unauth, /if \(\$user_surface_refusal = invalid_token\) \{/);
   const invalid = locationBody(config, '= /internal/lamaste/user-surface-invalid-token');
   assert.match(invalid, /return 401 '\{"error":"invalid_token"\}';/);
   assert.match(invalid, /add_header WWW-Authenticate 'Bearer error="invalid_token"' always;/);
@@ -1593,7 +1662,7 @@ test('the account locations: the reset API public, the change-password page and 
       assert.match(body, /auth_request \/internal\/lamaste\/account-authz;/, matcher);
       assert.match(body, /error_page 401 = \/internal\/lamaste\/sign-in;/, matcher);
     }
-    assertSignIn(text, fqdn);
+    assertSignIn(text, fqdn, fqdn.slice('auth.'.length));
     // Its API: the user as Gatekeeper vouched for them — never a Remote-User.
     const api = locationBody(text, '= /api/account/password');
     assert.match(api, /auth_request \/internal\/lamaste\/account-api-authz;/);

@@ -44,9 +44,9 @@ test('the catch-all: the default 443 server, as the relay listens, without a cer
   assert.deepEqual(directives, [
     'server {',
     LISTEN,
-    'server_name _;',
     // Logged as every server of the relay: the path, never the query.
     ACCESS_LOG_DIRECTIVE,
+    'server_name _;',
     // The socket's default server sets every name's protocol floor.
     ...RELAY_TLS_DIRECTIVES,
     'ssl_reject_handshake on;',
