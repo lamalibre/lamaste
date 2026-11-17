@@ -121,6 +121,7 @@ import {
   buildRequestHookPlan,
   forwardRequest,
   markPeerRelayAnswer,
+  resetAnswer,
   writeJson,
 } from './forward-core.js';
 import type {
@@ -227,13 +228,19 @@ export interface PeerGatewayOptions extends AgentForwardTimeouts {
     epoch: string,
     streamId: string,
   ): MaybePromise<number | null>;
-  /** Remember a floor the relay is about to answer in a gap (never lowered for one epoch and stream). */
+  /**
+   * Remember a floor the relay is about to answer in a gap: never lowered
+   * for one epoch and stream — except with `reset`, when the provider's
+   * head went back on the cursor's own stream (its database restored
+   * without a new stream): the floor becomes that head.
+   */
   recordEventFloor(
     consumer: string,
     scope: string,
     epoch: string,
     streamId: string,
     floor: number,
+    options?: { readonly reset?: boolean },
   ): MaybePromise<void>;
   /**
    * Whether an open call may go on: the edge still effective, the consumer
@@ -388,8 +395,9 @@ export function createPeerGateway(
     // Reset, whether or not the provider answered yet: the forwarding core
     // sees the stream close unfinished and cancels the provider's request
     // too — an answer written here instead would leave the provider working
-    // on a call no longer allowed.
-    res.destroy();
+    // on a call no longer allowed. A reset with an error code: a client
+    // must not take what it received for the whole answer.
+    resetAnswer(res);
   }
 
   function sweep(): void {
@@ -761,8 +769,16 @@ export function createPeerGateway(
       head: number,
       streamId: string,
       epoch: string = subscription.epoch,
+      reset = false,
     ): Promise<void> => {
-      await opts.recordEventFloor(consumer, pull.scope, epoch, streamId, head);
+      await opts.recordEventFloor(
+        consumer,
+        pull.scope,
+        epoch,
+        streamId,
+        head,
+        reset ? { reset: true } : undefined,
+      );
       answer(200, { gap: { reason, resumeFrom: head, epoch, streamId } });
     };
     /** The provider's head and stream, for a gap. */
@@ -825,8 +841,17 @@ export function createPeerGateway(
       return gap('granted', pulled.head, pulled.streamId);
     }
 
-    if (pulled.streamId !== streamId || after > pulled.head) {
+    if (pulled.streamId !== streamId) {
       return gap('stream_changed', pulled.head, pulled.streamId);
+    }
+    if (after > pulled.head) {
+      // The cursor past the head of its own stream: the provider's database
+      // went back (restored without a new stream). What lay between its head
+      // and the floor no longer exists, and what it writes from here is
+      // written after the grant: the floor goes back to the head with it —
+      // left above, every pull from the gap's resume point would be below
+      // it and answered a gap again.
+      return gap('stream_changed', pulled.head, pulled.streamId, subscription.epoch, true);
     }
     if (after < pulled.horizon) return gap('horizon', pulled.head, pulled.streamId);
     answer(200, {
@@ -979,7 +1004,7 @@ export function createPeerGateway(
         'The peer gateway failed on a stream',
       );
       if (!res.headersSent) refuse(res, 500, 'relay_error', 'The relay failed on this call');
-      else res.destroy();
+      else resetAnswer(res);
     }
   };
 }

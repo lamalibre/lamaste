@@ -52,6 +52,7 @@ const PEERS = {
         { method: 'GET', path: '/slow' },
         { method: 'GET', path: '/onward' },
         { method: 'GET', path: '/odd-headers' },
+        { method: 'GET', path: '/partial/:mode' },
       ],
       events: ['unit.renamed', 'unit.closed'],
     },
@@ -83,11 +84,20 @@ const state = {
   maxBodyBytes: 100 * 1024 * 1024,
   failGaps: 0,
   pullSlotTaken: false,
+  partialWritten: 0,
 };
 const denials = [];
 /** The relay's event floors, as serverd keeps them: (consumer scope) → { epoch, streamId, floor }. */
 const floors = new Map();
 let gatewayOptions;
+
+/** Wait until the first bytes of an answer can be read, without reading them. */
+function prefixArrived(response) {
+  return new Promise((resolve) => {
+    if (response.body.readableLength > 0) resolve();
+    else response.body.once('readable', resolve);
+  });
+}
 
 function releaseSlow() {
   for (const resolve of state.slowWaiters.splice(0)) resolve();
@@ -170,6 +180,21 @@ async function startProvider() {
         state.slowWaiters.push(resolve);
       });
       return { slow: true };
+    }),
+  );
+  server.get(
+    '/peer/partial/:mode',
+    peerRoute(async (request, _caller, reply) => {
+      // A prefix that parses as JSON on its own, then: held open until the
+      // caller goes away (`hold`), or the provider fails mid-body (`die`).
+      const body = new Readable({ read() {} });
+      body.push('{"partial":true}');
+      state.partialWritten += 1;
+      if (request.params.mode === 'die') {
+        setTimeout(() => body.destroy(new Error('the provider failed mid-body')), 100);
+      }
+      reply.header('content-type', 'application/json');
+      return body;
     }),
   );
   server.get(
@@ -280,10 +305,10 @@ before(async () => {
       const row = floors.get(`${from} ${scope}`);
       return row && row.epoch === epoch && row.streamId === streamId ? row.floor : null;
     },
-    recordEventFloor: (from, scope, epoch, streamId, floor) => {
+    recordEventFloor: (from, scope, epoch, streamId, floor, options) => {
       const key = `${from} ${scope}`;
       const row = floors.get(key);
-      const same = row && row.epoch === epoch && row.streamId === streamId;
+      const same = row && row.epoch === epoch && row.streamId === streamId && !options?.reset;
       floors.set(key, { epoch, streamId, floor: same ? Math.max(row.floor, floor) : floor });
     },
     maxInFlightPerProvider: 3,
@@ -484,6 +509,70 @@ test('a large streamed body and a server-sent event stream cross the channel', a
   assert.equal(await stream.text(), 'data: one\n\ndata: two\n\n');
 });
 
+test('a call aborted after its headers: the helpers reject, never a truncated body', async () => {
+  for (const read of ['json', 'text', 'buffer']) {
+    const abort = new AbortController();
+    const written = state.partialWritten;
+    const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold', {
+      signal: abort.signal,
+    });
+    assert.equal(response.status, 200);
+    await waitFor(() => state.partialWritten > written);
+    // The prefix has arrived; abort before the provider ends the body.
+    await prefixArrived(response);
+    abort.abort();
+    await assert.rejects(response[read](), { name: 'PeerCallError', code: 'aborted' });
+  }
+  // Read by hand, `finished()` says so too.
+  const abort = new AbortController();
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold', {
+    signal: abort.signal,
+  });
+  const done = response.finished();
+  const chunks = [];
+  for await (const chunk of response.body) {
+    chunks.push(chunk);
+    abort.abort();
+  }
+  assert.equal(Buffer.concat(chunks).toString('utf-8'), '{"partial":true}');
+  await assert.rejects(done, { code: 'aborted' });
+});
+
+test('a call aborted before its headers rejects with aborted', async () => {
+  const abort = new AbortController();
+  const call = consumer.peers.call('directory:read', 'GET', '/slow', { signal: abort.signal });
+  await waitFor(() => state.slowWaiters.length > 0);
+  abort.abort();
+  await assert.rejects(call, { name: 'PeerCallError', code: 'aborted' });
+  releaseSlow();
+});
+
+test('a provider that fails mid-body: the answer is truncated, not a shorter body', async () => {
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/die');
+  assert.equal(response.status, 200);
+  await assert.rejects(response.json(), { name: 'PeerCallError', code: 'truncated' });
+  await assert.rejects(consumer.peers.json('directory:read', 'GET', '/partial/die'), {
+    code: 'truncated',
+  });
+  // A body the provider ends: finished() resolves, asked before or after the read.
+  const whole = await consumer.peers.call('directory:read', 'GET', '/stream');
+  const done = whole.finished();
+  assert.equal(await whole.text(), 'data: one\n\ndata: two\n\n');
+  await done;
+  await whole.finished();
+});
+
+test('an answer the relay ends mid-body (the call no longer allowed) is truncated', async () => {
+  const response = await consumer.peers.call('directory:read', 'GET', '/partial/hold');
+  await prefixArrived(response);
+  state.recheckAllowed = false;
+  try {
+    await assert.rejects(response.json(), { name: 'PeerCallError', code: 'truncated' });
+  } finally {
+    state.recheckAllowed = true;
+  }
+});
+
 test('a replaced channel lets the call in flight finish; new calls take the new one', async () => {
   const slow = consumer.peers.json('directory:read', 'GET', '/slow');
   await waitFor(() => state.slowWaiters.length > 0);
@@ -604,6 +693,10 @@ test('HEAD reaches a GET endpoint, signed', async () => {
   const response = await consumer.peers.call('directory:read', 'HEAD', '/units/5');
   assert.equal(response.status, 200);
   response.body.resume();
+  await response.finished();
+  // No body, never read: finished() resolves all the same.
+  const unread = await consumer.peers.call('directory:read', 'HEAD', '/units/6');
+  await unread.finished();
 });
 
 test("Lamaste's readiness call: protocol 1 and the outbox position", async () => {
@@ -927,14 +1020,25 @@ test('a channel that dies without a FIN fails its calls at once and is replaced'
     await waitFor(() => second.peers.connected());
     assert.equal((await second.peers.json('directory:read', 'GET', '/units/1')).unit, '1');
 
+    // An answer under way when the connection stops: the dropped channel
+    // fails it, never ends it as a shorter body.
+    const partial = await second.peers.call('directory:read', 'GET', '/partial/hold');
+    await prefixArrived(partial);
+
     // The connection stops carrying anything; neither side sees it close.
     proxy.stallOpen();
     const started = Date.now();
-    await assert.rejects(
-      () => second.peers.json('directory:read', 'GET', '/units/2'),
-      (err) => err instanceof PeerCallError && err.code === 'relay_unavailable',
+    await Promise.all([
+      assert.rejects(partial.json(), { name: 'PeerCallError', code: 'truncated' }),
+      assert.rejects(
+        () => second.peers.json('directory:read', 'GET', '/units/2'),
+        (err) => err instanceof PeerCallError && err.code === 'relay_unavailable',
+      ),
+    ]);
+    assert.ok(
+      Date.now() - started < 3_000,
+      'the answer and the call failed within the PING timeout',
     );
-    assert.ok(Date.now() - started < 3_000, 'the call failed within the PING timeout');
 
     // The relay attaches anew (a fresh connection carries bytes again): the
     // dead session is dropped on this side too, and calls work again.
@@ -1120,4 +1224,146 @@ test('a consumer that no longer qualifies gets no edges after its wait', async (
       .edges()
       .consumes.every((e, i) => e.required !== snapshotBefore.consumes[i].required),
   );
+});
+
+// ---------------------------------------------------------------------------
+// A provider restored from a backup (4.14.2): renewing its stream
+// ---------------------------------------------------------------------------
+
+/** The cursor row of the consumer, once it has caught up and no gap is pending. */
+async function caughtUp() {
+  return waitFor(() => {
+    const row = consumer.db
+      .prepare('SELECT cursor, stream_id, gap_reason FROM lamaste_peer_cursors')
+      .get();
+    return row && row.cursor !== null && row.gap_reason === null ? row : null;
+  }, 15_000);
+}
+
+/**
+ * What a restore does to the provider's outbox: the events written after
+ * the backup are gone, and the sequence is rolled back with them, so the
+ * next events reuse their `seq`. The stream row is the backup's.
+ */
+function restoreProviderTo(backupHead) {
+  provider.db.prepare('DELETE FROM lamaste_peer_outbox WHERE seq > ?').run(backupHead);
+  provider.db
+    .prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'lamaste_peer_outbox'")
+    .run(backupHead);
+}
+
+/** Keep the consumer away (its pulls refused), run `fn`, let it back. */
+async function whileConsumerAway(fn) {
+  state.pullSlotTaken = true;
+  try {
+    await new Promise((r) => setTimeout(r, 500));
+    await fn();
+  } finally {
+    state.pullSlotTaken = false;
+  }
+}
+
+test('a restored provider that renews its stream: a consumer away across the restore gets stream_changed', async () => {
+  await caughtUp();
+
+  // Without renewal — the case renewStream() closes. The consumer reads two
+  // events past the backup, is away while the provider is restored and
+  // writes three new ones: the head passes its cursor under the same stream,
+  // so it continues from reissued seq values and sees only the last one.
+  const backupA = provider.outbox.state().head;
+  publish('lost-a1');
+  publish('lost-a2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'lost-a2'), 15_000);
+  const gapsA = consumer.gaps.length;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backupA);
+    publish('restored-a1');
+    publish('restored-a2');
+    publish('restored-a3');
+  });
+  await waitFor(() => consumer.received.some((e) => e.key === 'restored-a3'), 15_000);
+  assert.equal(consumer.gaps.length, gapsA, 'no gap: the loss is silent');
+  assert.equal(
+    consumer.received.some((e) => e.key === 'restored-a1' || e.key === 'restored-a2'),
+    false,
+  );
+
+  // With renewal: the same restore, then renewStream() before the provider
+  // serves events again. The consumer's next pull is answered with the gap
+  // stream_changed at the head and the new stream — the gateway's events
+  // path, unchanged since 4.13, decides it; the relay needs nothing new.
+  await caughtUp();
+  const backupB = provider.outbox.state().head;
+  publish('lost-b1');
+  publish('lost-b2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'lost-b2'), 15_000);
+  const gapsB = consumer.gaps.length;
+  const receivedB = consumer.received.length;
+  let renewed;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backupB);
+    publish('restored-b1');
+    publish('restored-b2');
+    publish('restored-b3');
+    renewed = provider.outbox.renewStream();
+  });
+  await waitFor(() => consumer.gaps.length > gapsB, 15_000);
+  const gap = consumer.gaps[gapsB];
+  assert.equal(gap.reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.stream_id, renewed.streamId);
+  assert.equal(row.cursor, renewed.head);
+  // Nothing of the restored history crossed as events: the gap's
+  // reconcile is how the consumer learns it.
+  assert.equal(consumer.received.length, receivedB);
+
+  // And it reads on, on the new stream.
+  publish('after-renewal');
+  await waitFor(() => consumer.received.some((e) => e.key === 'after-renewal'), 15_000);
+});
+
+test('renewing the stream while the consumer is ahead of the restored head: stream_changed too', async () => {
+  await caughtUp();
+  const backup = provider.outbox.state().head;
+  publish('ahead-1');
+  publish('ahead-2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'ahead-2'), 15_000);
+  const gapsBefore = consumer.gaps.length;
+  let renewed;
+  await whileConsumerAway(() => {
+    restoreProviderTo(backup);
+    renewed = provider.outbox.renewStream();
+  });
+  await waitFor(() => consumer.gaps.length > gapsBefore, 15_000);
+  assert.equal(consumer.gaps[gapsBefore].reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.stream_id, renewed.streamId);
+  assert.equal(row.cursor, renewed.head);
+});
+
+test('restored without renewal, the cursor ahead of the head and the floor above it: one stream_changed, then events', async () => {
+  await caughtUp();
+  const backup = provider.outbox.state().head;
+  publish('floor-1');
+  publish('floor-2');
+  await waitFor(() => consumer.received.some((e) => e.key === 'floor-2'), 15_000);
+  // A gap after the backup: its floor (the head then) is above the backup's head.
+  const gapsGrant = consumer.gaps.length;
+  state.epochSeq += 1;
+  await waitFor(() => consumer.gaps.length > gapsGrant, 15_000);
+  await caughtUp();
+  assert.ok(floors.get('leave directory:read').floor > backup, 'the floor is above the backup');
+  const gapsBefore = consumer.gaps.length;
+  await whileConsumerAway(() => restoreProviderTo(backup));
+  await waitFor(() => consumer.gaps.length > gapsBefore, 15_000);
+  assert.equal(consumer.gaps[gapsBefore].reason, 'stream_changed');
+  const row = await caughtUp();
+  assert.equal(row.cursor, backup);
+  assert.equal(floors.get('leave directory:read').floor, backup, 'the floor followed the head');
+  // Settled: no gap after the one (before the fix the consumer looped, gap after gap).
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(consumer.gaps.length, gapsBefore + 1);
+  publish('after-restore');
+  await waitFor(() => consumer.received.some((e) => e.key === 'after-restore'), 15_000);
+  assert.equal(consumer.gaps.length, gapsBefore + 1);
 });

@@ -396,9 +396,22 @@ export async function eventFloor(consumer, scope, epoch, streamId) {
 /**
  * Record the floor the relay is about to answer in a gap. For the same
  * epoch and stream a floor only rises; another epoch or stream replaces it.
+ * `reset` replaces it whatever it was: the gateway passes it when the
+ * provider's head went back on the cursor's own stream (a database
+ * restored without a new stream), so the floor follows the head down.
  */
-export async function recordEventFloor(consumer, scope, epoch, streamId, floor) {
+export async function recordEventFloor(consumer, scope, epoch, streamId, floor, options = {}) {
   const db = await getStateDb();
+  if (options?.reset === true) {
+    db.prepare(
+      `INSERT INTO peer_event_floors (consumer, scope, epoch, stream_id, floor, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (consumer, scope) DO UPDATE SET
+         floor = excluded.floor, epoch = excluded.epoch, stream_id = excluded.stream_id,
+         updated_at = excluded.updated_at`,
+    ).run(consumer, scope, epoch, streamId, floor, new Date().toISOString());
+    return;
+  }
   db.prepare(
     `INSERT INTO peer_event_floors (consumer, scope, epoch, stream_id, floor, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)

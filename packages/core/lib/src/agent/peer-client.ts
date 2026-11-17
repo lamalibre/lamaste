@@ -38,6 +38,7 @@ import http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex, Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
 import { RESPONDER_HEADER, isOriginFormPath } from '../caller-assertion.js';
 import type { PeerCallerIdentity } from '../caller-assertion.js';
@@ -80,7 +81,11 @@ import { peerContextOf } from './peer-context.js';
 
 /** A failed call: the relay's code (`not_granted`, `peer_unavailable`, …) or the client's own. */
 export class PeerCallError extends Error {
-  /** The relay's code, `relay_unavailable` (no channel), `timeout`, or `provider_status` (json()). */
+  /**
+   * The relay's code, `relay_unavailable` (no channel), `timeout`, `aborted`
+   * (the call's `signal`), `truncated` (the answer's stream was reset before
+   * it ended), `too_large`, or `provider_status` (json()).
+   */
   readonly code: string;
   /** The HTTP status, when there was an answer. */
   readonly status: number | null;
@@ -140,8 +145,20 @@ export interface PeerCallOptions {
 export interface PeerResponse {
   readonly status: number;
   readonly headers: Record<string, string | string[]>;
-  /** The body as it streams. Read it, or call one of the helpers once. */
+  /**
+   * The body as it streams. Read it, or call one of the helpers once. The
+   * helpers reject (`aborted`, `truncated`) when the stream is reset before
+   * the provider ends it; reading `body` yourself, a reset ends it without
+   * an error — await `finished()` (while or after reading it) before
+   * trusting what you read.
+   */
   readonly body: Readable;
+  /**
+   * Resolves once `body` has been read to its end and the provider ended it;
+   * rejects (`aborted`, `truncated`) when it was reset instead. Pending while
+   * the body is unread.
+   */
+  finished(): Promise<void>;
   buffer(maxBytes?: number): Promise<Buffer>;
   text(maxBytes?: number): Promise<string>;
   json<T = unknown>(maxBytes?: number): Promise<T>;
@@ -279,23 +296,83 @@ interface CursorRow {
 const RELAY_ANSWER_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Drop a peer channel so that every answer still streaming on it fails:
+ * a session destroyed without an error resets its streams with `NO_ERROR`,
+ * which the other side reads as the clean end of each body. With an error
+ * they are reset with `INTERNAL_ERROR`. The session's own `'error'`
+ * listener takes the error.
+ */
+function dropSession(s: ClientHttp2Session): void {
+  if (!s.destroyed) s.destroy(new Error('The peer channel was dropped'));
+}
+
 function headerValue(headers: PeerRequestLike['headers'], name: string): string | undefined {
   const value = headers[name];
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function readAll(stream: Readable, maxBytes: number): Promise<Buffer> {
+/**
+ * The whole answer, or a rejection: an HTTP/2 stream closed by a reset —
+ * a call aborted through its `signal` (`aborted`), a stream the relay or
+ * the channel reset (`truncated`) — ends its readable side without an
+ * error, so what was received so far would pass for the whole body (and a
+ * prefix of JSON can parse). A body counts only when the peer ended it
+ * cleanly.
+ */
+async function readAll(
+  stream: ClientHttp2Stream,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    size += chunk.length;
-    if (size > maxBytes) {
-      stream.destroy();
-      throw new PeerCallError('too_large', `The answer is larger than ${maxBytes} bytes`);
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > maxBytes) {
+        stream.destroy();
+        throw new PeerCallError('too_large', `The answer is larger than ${maxBytes} bytes`);
+      }
+      chunks.push(chunk);
     }
-    chunks.push(chunk);
+  } catch (err: unknown) {
+    if (err instanceof PeerCallError) throw err;
+    if (signal?.aborted) throw new PeerCallError('aborted', 'The call was aborted');
+    throw new PeerCallError(
+      'truncated',
+      `The answer was cut short: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+  await endedCleanly(stream, signal);
   return Buffer.concat(chunks, size);
+}
+
+/**
+ * Resolves once the body has been read to its end and the stream has
+ * closed with the provider's clean end; rejects for a reset or an abort.
+ * Waits while the body is still being read.
+ */
+async function endedCleanly(
+  stream: ClientHttp2Stream,
+  signal?: AbortSignal,
+  bodyless = false,
+): Promise<void> {
+  try {
+    await finished(stream, { writable: false });
+  } catch {
+    // A reset or an error: judged below, from how the stream closed.
+  }
+  if (!stream.closed) await new Promise<void>((resolve) => stream.once('close', resolve));
+  const clean = stream.rstCode === http2.constants.NGHTTP2_NO_ERROR;
+  // An answer that has no body (HEAD, 204, 304) closes cleanly without its
+  // readable side ever ending when nobody read it.
+  if (clean && (stream.readableEnded || (bodyless && !signal?.aborted))) return;
+  if (signal?.aborted) throw new PeerCallError('aborted', 'The call was aborted');
+  throw new PeerCallError(
+    'truncated',
+    `The answer was cut short (stream reset, code ${String(stream.rstCode)})`,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -350,19 +427,19 @@ export function createPeers(opts: PeersOptions): Peers {
     probing.add(s);
     const deadline = setTimeout(() => {
       logger?.warn({ plugin: opts.plugin }, 'Peer channel did not answer a PING: dropped');
-      s.destroy();
+      dropSession(s);
     }, pingTimeoutMs);
     deadline.unref();
     const sent = s.ping((err) => {
       probing.delete(s);
       clearTimeout(deadline);
-      if (err) s.destroy();
+      if (err) dropSession(s);
       else aliveAt.set(s, Date.now());
     });
     if (!sent) {
       probing.delete(s);
       clearTimeout(deadline);
-      s.destroy();
+      dropSession(s);
     }
   }
 
@@ -540,10 +617,13 @@ export function createPeers(opts: PeersOptions): Peers {
     if (callOpts.signal) {
       const signal = callOpts.signal;
       if (signal.aborted) stream.close(http2.constants.NGHTTP2_CANCEL);
-      else
-        signal.addEventListener('abort', () => stream.close(http2.constants.NGHTTP2_CANCEL), {
-          once: true,
-        });
+      else {
+        // Removed when the stream closes: a long-lived signal must not keep
+        // every stream it was given.
+        const onAbort = (): void => stream.close(http2.constants.NGHTTP2_CANCEL);
+        signal.addEventListener('abort', onAbort, { once: true });
+        stream.once('close', () => signal.removeEventListener('abort', onAbort));
+      }
     }
     if (body !== undefined) {
       if (typeof body === 'string' || body instanceof Uint8Array) stream.end(body);
@@ -566,7 +646,11 @@ export function createPeers(opts: PeersOptions): Peers {
       });
       stream.once('close', () => {
         clearTimeout(timer);
-        reject(new PeerCallError('relay_unavailable', 'The channel closed before an answer'));
+        reject(
+          callOpts.signal?.aborted
+            ? new PeerCallError('aborted', 'The call was aborted')
+            : new PeerCallError('relay_unavailable', 'The channel closed before an answer'),
+        );
       });
     });
     const status = Number(responseHeaders[':status'] ?? 0);
@@ -598,7 +682,7 @@ export function createPeers(opts: PeersOptions): Peers {
       out[name] = Array.isArray(value) ? value : String(value);
     }
     let consumed = false;
-    const once = (): Readable => {
+    const once = (): ClientHttp2Stream => {
       if (consumed) throw new Error('The body was read already');
       consumed = true;
       return stream;
@@ -607,11 +691,13 @@ export function createPeers(opts: PeersOptions): Peers {
       status,
       headers: out,
       body: stream,
-      buffer: (maxBytes = DEFAULT_MAX_BYTES) => readAll(once(), maxBytes),
+      finished: () =>
+        endedCleanly(stream, callOpts.signal, upper === 'HEAD' || status === 204 || status === 304),
+      buffer: (maxBytes = DEFAULT_MAX_BYTES) => readAll(once(), maxBytes, callOpts.signal),
       text: async (maxBytes = DEFAULT_MAX_BYTES) =>
-        (await readAll(once(), maxBytes)).toString('utf-8'),
+        (await readAll(once(), maxBytes, callOpts.signal)).toString('utf-8'),
       json: async <T>(maxBytes = DEFAULT_MAX_BYTES) => {
-        const raw = (await readAll(once(), maxBytes)).toString('utf-8');
+        const raw = (await readAll(once(), maxBytes, callOpts.signal)).toString('utf-8');
         return (raw.length === 0 ? null : JSON.parse(raw)) as T;
       },
     };
@@ -730,11 +816,12 @@ export function createPeers(opts: PeersOptions): Peers {
     });
   }
 
-  async function pullOnce(scope: string): Promise<number> {
+  /** One step of a scope's loop: a pending gap reconciled, a gap answered, or the events applied. */
+  async function pullOnce(scope: string): Promise<'reconciled' | 'gap' | 'events'> {
     const row = cursorRow(scope);
     if (row && row.gap_reason !== null) {
       await resolveGap(scope, row);
-      return 0;
+      return 'reconciled';
     }
     const response = await call(scope, 'POST', PEER_CHANNEL_EVENTS_PATH, {
       json: {
@@ -760,23 +847,39 @@ export function createPeers(opts: PeersOptions): Peers {
     if ('gap' in answer) {
       recordGap(scope, answer.gap);
       logger?.info({ scope, reason: answer.gap.reason }, 'An events gap: reconciling');
-      return 0;
+      return 'gap';
     }
-    if (!row) return 0;
-    applyEvents(scope, row, answer);
-    return answer.events.length;
+    if (row) applyEvents(scope, row, answer);
+    return 'events';
   }
 
   async function loop(scope: string): Promise<void> {
     let delay = PEER_REATTACH_MIN_MS;
+    // Gaps answered with no events pull between them: a provider whose
+    // stream keeps changing, or one restored again and again. Each costs a
+    // reconcile through the provider's endpoints, so they back off as
+    // failures do.
+    let gapsInARow = 0;
+    let gapDelay = PEER_REATTACH_MIN_MS;
     while (!closed) {
       if (!session) {
         const s = await sessionReady();
         if (!s) continue;
       }
       try {
-        await pullOnce(scope);
+        const outcome = await pullOnce(scope);
         delay = PEER_REATTACH_MIN_MS;
+        if (outcome === 'events') {
+          gapsInARow = 0;
+          gapDelay = PEER_REATTACH_MIN_MS;
+        } else if (outcome === 'gap') {
+          gapsInARow += 1;
+          if (gapsInARow > 1) {
+            logger?.warn({ scope, gapsInARow }, 'Events gaps one after another: backing off');
+            await sleep(gapDelay);
+            gapDelay = Math.min(gapDelay * 2, PEER_REATTACH_MAX_MS);
+          }
+        }
       } catch (err: unknown) {
         const wait =
           err instanceof PeerCallError && err.retryAfter !== null ? err.retryAfter * 1000 : delay;
@@ -1007,7 +1110,7 @@ export function createPeers(opts: PeersOptions): Peers {
         await new Promise<void>((resolve) => {
           s.close(() => resolve());
           setTimeout(() => {
-            s.destroy();
+            dropSession(s);
             resolve();
           }, 1_000).unref();
         });

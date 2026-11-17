@@ -1,0 +1,1043 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 69,
+    "name": "A provider restored from a backup renews its event stream",
+    "suite": "e2e-three-vm",
+    "description": "69 — A provider restored from a backup renews its event stream (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-both-plugins-hosted-the-shelf-applied",
+      "label": "Pre-flight, both plugins hosted, the shelf applied",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-2",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-69-peers-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "The shelf grants ${SCOPE_READ} and its ${EVENT_TYPE} events to ${CONSUMER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The shelf grants ${SCOPE_READ} and its ${EVENT_TYPE} events to ${CONSUMER}"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "The consumer started with an 'initial' gap and holds a cursor",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer started with an 'initial' gap and holds a cursor"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Gaps $(gap_reasons), cursor $(consumer_cursor \"${SCOPE_READ}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps $(gap_reasons), cursor $(consumer_cursor \"${SCOPE_READ}\")"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight, both plugins hosted, the shelf applied\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nLOCAL_TMP=$(mktemp -d /tmp/e2e-69-peers-XXXXXXXX)\npeers_setup \"${POLICY_ID}\"\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf grants ${SCOPE_READ} and its ${EVENT_TYPE} events to ${CONSUMER}\" || true\nif wait_for 90 gaps_are initial && wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The consumer started with an 'initial' gap and holds a cursor\"\nelse\n  log_fail \"Gaps $(gap_reasons), cursor $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\n\n# ===========================================================================\n# 1. Without renewal: the loss is silent\n# ==========================================================================="
+    },
+    {
+      "id": "restored-without-renewing-the-stream-reissued-seq-values-no-gap",
+      "label": "Restored without renewing the stream: reissued seq values, no gap",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_backup"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Set BACKUP_HEAD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$OUT\" '.state.head'"
+          },
+          "capture": [
+            {
+              "variable": "BACKUP_HEAD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Set STREAM_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$OUT\" '.state.streamId'"
+          },
+          "capture": [
+            {
+              "variable": "STREAM_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "A backup of the provider's database at head ${BACKUP_HEAD}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "STREAM_A"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "A backup of the provider's database at head ${BACKUP_HEAD}"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "The consumer read x-1 and x-2, written after the backup",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer read x-1 and x-2, written after the backup"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "restore_provider keep"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "The provider restored from the backup, its stream kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "RESTORED"
+              },
+              "message": "The provider restored from the backup, its stream kept"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "The restored outbox has the backup's stream id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stream_of_provider)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STREAM_A"
+              },
+              "message": "The restored outbox has the backup's stream id"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_publish 3 y"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "The restored outbox reissues seq $((BACKUP_HEAD + 1)), which x-1 had",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OUT\" '.seqs[0]')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$((BACKUP_HEAD + 1))"
+              },
+              "message": "The restored outbox reissues seq $((BACKUP_HEAD + 1)), which x-1 had"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "The consumer reads on from its cursor: y-3",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer reads on from its cursor: y-3"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "y-1 or y-2 reached the consumer: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "y-1 or y-2 reached the consumer: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "y-1 and y-2 never reach it — their seq values are behind its cursor",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "y-1 and y-2 never reach it — their seq values are behind its cursor"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "…and it is told nothing: the loss renewStream() closes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gap_reasons)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "initial"
+              },
+              "message": "…and it is told nothing: the loss renewStream() closes"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Restored without renewing the stream: reissued seq values, no gap\"\n\nOUT=$(provider_backup)\nBACKUP_HEAD=$(json_get \"$OUT\" '.state.head')\nSTREAM_A=$(json_get \"$OUT\" '.state.streamId')\nassert_not_eq \"${STREAM_A}\" \"\" \"A backup of the provider's database at head ${BACKUP_HEAD}\" || true\nprovider_publish 2 x > /dev/null\nif wait_for 60 has_tag x-2; then\n  log_pass \"The consumer read x-1 and x-2, written after the backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the restore\"\nOUT=$(restore_provider keep)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored from the backup, its stream kept\" || true\nprovider_back \"Restored\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_A}\" \"The restored outbox has the backup's stream id\" || true\nOUT=$(provider_publish 3 y)\nassert_eq \"$(json_get \"$OUT\" '.seqs[0]')\" \"$((BACKUP_HEAD + 1))\" \"The restored outbox reissues seq $((BACKUP_HEAD + 1)), which x-1 had\" || true\nconsumer_back \"After the restore\"\nif wait_for 60 has_tag y-3; then\n  log_pass \"The consumer reads on from its cursor: y-3\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nif has_tag y-1 || has_tag y-2; then\n  log_fail \"y-1 or y-2 reached the consumer: $(events_tags)\"\nelse\n  log_pass \"y-1 and y-2 never reach it — their seq values are behind its cursor\"\nfi\nassert_eq \"$(gap_reasons)\" \"initial\" \"…and it is told nothing: the loss renewStream() closes\" || true\n\n# ===========================================================================\n# 2. With renewal: stream_changed, whatever the cursor\n# ==========================================================================="
+    },
+    {
+      "id": "restored-and-the-stream-renewed-the-gap-stream-changed",
+      "label": "Restored and the stream renewed: the gap stream_changed",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "provider_backup"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Set STREAM_B",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$OUT\" '.state.streamId'"
+          },
+          "capture": [
+            {
+              "variable": "STREAM_B",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "The consumer read z-1 and z-2, written after the second backup",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer read z-1 and z-2, written after the second backup"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set EVENTS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "events_tags"
+          },
+          "capture": [
+            {
+              "variable": "EVENTS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "restore_provider renew"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "RESTORED"
+              },
+              "message": "The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set RENEWED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1"
+          },
+          "capture": [
+            {
+              "variable": "RENEWED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Set STREAM_C",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$RENEWED\" '.renewed.streamId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "STREAM_C",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "renewPeerOutboxStream answered a new stream (${RENEWED})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "STREAM_C"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "renewPeerOutboxStream answered a new stream (${RENEWED})"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "…not the backup's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "STREAM_C"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STREAM_B"
+              },
+              "message": "…not the backup's"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "The running outbox serves the renewed stream",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stream_of_provider)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STREAM_C"
+              },
+              "message": "The running outbox serves the renewed stream"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "The consumer's next pull was answered the gap stream_changed (onGap ran)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer's next pull was answered the gap stream_changed (onGap ran)"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Gaps: $(gap_reasons)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons)"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "The gap reconciled: a cursor again, no gap pending",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The gap reconciled: a cursor again, no gap pending"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Cursor: $(consumer_cursor \"${SCOPE_READ}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Cursor: $(consumer_cursor \"${SCOPE_READ}\")"
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "The consumer's cursor is on the renewed stream",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cursor_stream)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STREAM_C"
+              },
+              "message": "The consumer's cursor is on the renewed stream"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "None of w-1..w-3 crossed as events — the reconcile covers them",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(events_tags)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "EVENTS_BEFORE"
+              },
+              "message": "None of w-1..w-3 crossed as events — the reconcile covers them"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "It reads on, on the new stream: v-1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "It reads on, on the new stream: v-1"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        }
+      ],
+      "bash": "log_section \"Restored and the stream renewed: the gap stream_changed\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nOUT=$(provider_backup)\nSTREAM_B=$(json_get \"$OUT\" '.state.streamId')\nprovider_publish 2 z > /dev/null\nif wait_for 60 has_tag z-2; then\n  log_pass \"The consumer read z-1 and z-2, written after the second backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n# What the consumer recorded before it goes away (its half answers nothing while stopped).\nEVENTS_BEFORE=$(events_tags)\nconsumer_away \"Before the second restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its restore step run as ${PROVIDER_USER} under the unit's protections\" || true\nRENEWED=$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\nSTREAM_C=$(json_get \"$RENEWED\" '.renewed.streamId // empty')\nassert_not_eq \"${STREAM_C}\" \"\" \"renewPeerOutboxStream answered a new stream (${RENEWED})\" || true\nassert_not_eq \"${STREAM_C}\" \"${STREAM_B}\" \"…not the backup's\" || true\nprovider_back \"Restored and renewed\"\nassert_eq \"$(stream_of_provider)\" \"${STREAM_C}\" \"The running outbox serves the renewed stream\" || true\nprovider_publish 3 w > /dev/null\nconsumer_back \"After the second restore\"\nif wait_for 90 gaps_are \"initial,stream_changed\"; then\n  log_pass \"The consumer's next pull was answered the gap stream_changed (onGap ran)\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"The gap reconciled: a cursor again, no gap pending\"\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nassert_eq \"$(cursor_stream)\" \"${STREAM_C}\" \"The consumer's cursor is on the renewed stream\" || true\nassert_eq \"$(events_tags)\" \"${EVENTS_BEFORE}\" \"None of w-1..w-3 crossed as events — the reconcile covers them\" || true\nprovider_publish 1 v > /dev/null\nif wait_for 60 has_tag v-1; then\n  log_pass \"It reads on, on the new stream: v-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 3. A cursor ahead of the restored head\n# ==========================================================================="
+    },
+    {
+      "id": "restored-and-renewed-nothing-written-since-the-cursor-ahead-of-the-head",
+      "label": "Restored and renewed, nothing written since: the cursor ahead of the head",
+      "steps": [
+        {
+          "id": "step-58",
+          "label": "The consumer read u-1 and u-2, written after the third backup",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer read u-1 and u-2, written after the third backup"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "restore_provider renew"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "The provider restored and renewed again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "RESTORED"
+              },
+              "message": "The provider restored and renewed again"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Set STREAM_D",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\" '.renewed.streamId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "STREAM_D",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Its cursor past the restored head: stream_changed again, not a stalled pull",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Its cursor past the restored head: stream_changed again, not a stalled pull"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Gaps: $(gap_reasons); cursor $(consumer_cursor \"${SCOPE_READ}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons); cursor $(consumer_cursor \"${SCOPE_READ}\")"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "The consumer's cursor is on the third stream",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cursor_stream)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STREAM_D"
+              },
+              "message": "The consumer's cursor is on the third stream"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Cursor: $(consumer_cursor \"${SCOPE_READ}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Cursor: $(consumer_cursor \"${SCOPE_READ}\")"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "It reads on: t-1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "It reads on: t-1"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        }
+      ],
+      "bash": "log_section \"Restored and renewed, nothing written since: the cursor ahead of the head\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nprovider_backup > /dev/null\nprovider_publish 2 u > /dev/null\nif wait_for 60 has_tag u-2; then\n  log_pass \"The consumer read u-1 and u-2, written after the third backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\nconsumer_away \"Before the third restore\"\nOUT=$(restore_provider renew)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored and renewed again\" || true\nSTREAM_D=$(json_get \"$(printf '%s\\n' \"$OUT\" | grep '^{\"renewed\"' | head -n 1)\" '.renewed.streamId // empty')\nprovider_back \"Restored a third time\"\nconsumer_back \"After the third restore\"\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed\"; then\n  log_pass \"Its cursor past the restored head: stream_changed again, not a stalled pull\"\nelse\n  log_fail \"Gaps: $(gap_reasons); cursor $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nif wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  assert_eq \"$(cursor_stream)\" \"${STREAM_D}\" \"The consumer's cursor is on the third stream\" || true\nelse\n  log_fail \"Cursor: $(consumer_cursor \"${SCOPE_READ}\")\"\nfi\nprovider_publish 1 t > /dev/null\nif wait_for 60 has_tag t-1; then\n  log_pass \"It reads on: t-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n\n# ===========================================================================\n# 4. Without renewal, the cursor ahead and the floor above the restored head\n# ==========================================================================="
+    },
+    {
+      "id": "restored-without-renewal-a-gap-after-the-backup-one-stream-changed-no-loop",
+      "label": "Restored without renewal, a gap after the backup: one stream_changed, no loop",
+      "steps": [
+        {
+          "id": "step-76",
+          "label": "The consumer read s-1 and s-2, written after the fourth backup",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The consumer read s-1 and s-2, written after the fourth backup"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "DELETE /api/peers/shelves/${SHELF_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "peers/shelves/${SHELF_ID}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-79",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "apply_shelf"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "The shelf applied again: a new grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The shelf applied again: a new grant"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "A 'granted' gap at the head after the backup: the relay's floor is above it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "A 'granted' gap at the head after the backup: the relay's floor is above it"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Gaps: $(gap_reasons)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons)"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "restore_provider keep"
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "The provider restored, its stream kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "RESTORED"
+              },
+              "message": "The provider restored, its stream kept"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Its cursor past the restored head: stream_changed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Its cursor past the restored head: stream_changed"
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Gaps: $(gap_reasons)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gaps: $(gap_reasons)"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Sleep 20s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 20
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Twenty seconds on, no further gap: the floor followed the head down",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(gap_reasons)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "initial,stream_changed,stream_changed,granted,stream_changed"
+              },
+              "message": "Twenty seconds on, no further gap: the floor followed the head down"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "It reads on from the restored head: r-1",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "It reads on from the restored head: r-1"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Recorded: $(events_tags)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Recorded: $(events_tags)"
+          }
+        }
+      ],
+      "bash": "log_section \"Restored without renewal, a gap after the backup: one stream_changed, no loop\"\n\nwait_for 60 consumer_cursor_ready \"${SCOPE_READ}\" > /dev/null || true\nprovider_backup > /dev/null\nprovider_publish 2 s > /dev/null\nif wait_for 60 has_tag s-2; then\n  log_pass \"The consumer read s-1 and s-2, written after the fourth backup\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi\n# The grant renewed: a gap whose floor is the head after s-2, above the backup.\nhost_api_delete \"peers/shelves/${SHELF_ID}\" > /dev/null 2>&1 || true\nRESP=$(apply_shelf)\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"The shelf applied again: a new grant\" || true\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed,granted\" && wait_for 60 consumer_cursor_ready \"${SCOPE_READ}\"; then\n  log_pass \"A 'granted' gap at the head after the backup: the relay's floor is above it\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nconsumer_away \"Before the fourth restore\"\nOUT=$(restore_provider keep)\nassert_contains \"$OUT\" \"RESTORED\" \"The provider restored, its stream kept\" || true\nprovider_back \"Restored a fourth time\"\nconsumer_back \"After the fourth restore\"\nif wait_for 90 gaps_are \"initial,stream_changed,stream_changed,granted,stream_changed\"; then\n  log_pass \"Its cursor past the restored head: stream_changed\"\nelse\n  log_fail \"Gaps: $(gap_reasons)\"\nfi\nsleep 20\nassert_eq \"$(gap_reasons)\" \"initial,stream_changed,stream_changed,granted,stream_changed\" \"Twenty seconds on, no further gap: the floor followed the head down\" || true\nprovider_publish 1 r > /dev/null\nif wait_for 60 has_tag r-1; then\n  log_pass \"It reads on from the restored head: r-1\"\nelse\n  log_fail \"Recorded: $(events_tags)\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 69 — A provider restored from a backup renews its event stream (Three-VM)\n# ============================================================================\n# 4.14.2. The provider e2e-pdir (agent VM) is restored from a backup of its\n# database while the consumer e2e-pcons (visitor VM's second agent) is away.\n# A restored outbox reissues the `seq` values it had given out after the\n# backup, under the stream id it had then. The restore is done as a\n# plugin's runbook would: the agent half stopped (its socket and service),\n# the backup copied over data.db by the plugin's own account, and — where\n# the spec says so — the plugin's restore step, renewPeerOutboxStream on\n# data.db, run as that account under the unit's protections; then the half\n# started again.\n#\n# 1. Without renewal (the case renewStream closes): the consumer read two\n#    events past the backup; the restored provider writes three new ones,\n#    so its head passes the consumer's cursor under the same stream. The\n#    consumer continues from reissued seq values: it never sees the first\n#    two and is told nothing.\n# 2. With renewal, the same restore: the consumer's next pull is answered\n#    the gap `stream_changed` at the head — none of the restored history\n#    crosses as events — and it reads on, on the new stream.\n# 3. With renewal and nothing written since the restore, the consumer's\n#    cursor ahead of the restored head: `stream_changed` too, not a stalled\n#    pull (the relay reads a provider's answer for a cursor past its head\n#    as the head since 4.14.2).\n# 4. Without renewal, the cursor ahead of the restored head and the relay's\n#    floor above it (a gap after the backup): one `stream_changed`, the\n#    floor following the head down, and events again — not a gap after\n#    every pull.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n# shellcheck source-path=SCRIPTDIR source=peers-harness.sh\nsource \"${SCRIPT_DIR}/peers-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\nPOLICY_ID=\"e2e-apphost-69\"\nREMOTE_DIR=\"/var/tmp/e2e-69-peers\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${CONSUMER} ${PROVIDER}\"\nCLEAN_ROUTES=\"${PROVIDER}\"\nPURGE_PACKAGES=\"\"\nCONSUMER_UNITS=\"lamalibre-app-${CONSUMER}.socket lamalibre-app-${CONSUMER}.service\"\nPROVIDER_UNITS=\"lamalibre-app-${PROVIDER}.socket lamalibre-app-${PROVIDER}.service\"\nPROVIDER_USER=\"lamaste-app-${PROVIDER}\"\nPROVIDER_DATA=\"/var/lib/lamalibre/apps/${PROVIDER}\"\n\nbegin_test \"69 — A provider restored from a backup renews its event stream (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"systemctl start ${CONSUMER_UNITS} > /dev/null 2>&1; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"systemctl start ${PROVIDER_UNITS} > /dev/null 2>&1; rm -f ${PROVIDER_DATA}/e2e-backup.db; true\" > /dev/null 2>&1\n  peers_cleanup\n}\ntrap cleanup EXIT\n\nevents_tags() { consumer_state | jq -r '[.events[]? | \"\\(.tag)-\\(.n)\"] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngap_reasons() { consumer_state | jq -r '[.gaps[]?.reason] | join(\",\")' 2>/dev/null || echo \"?\"; }\ngaps_are() { [ \"$(gap_reasons)\" = \"$1\" ]; }\nhas_tag() { events_tags | tr ',' '\\n' | grep -qx \"$1\"; }\nhealth_of() { hosting_field \"$1\" '.hosting.health.state'; }\nis_up() { [ \"$(health_of \"$1\")\" = \"up\" ]; }\nis_down() { [ \"$(health_of \"$1\")\" = \"down\" ]; }\nstream_of_provider() { json_get \"$(provider_outbox)\" '.state.streamId'; }\ncursor_stream() { json_get \"$(consumer_cursor \"${SCOPE_READ}\")\" '.stream_id'; }\n\n# consumer_away — the consumer's agent half stopped; waits for the relay to see it down\nconsumer_away() {\n  visitor_exec \"systemctl stop ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_down \"${CONSUMER}\"; then\n    log_pass \"$1: ${CONSUMER} stopped, the relay sees it down\"\n  else\n    log_fail \"$1: health of ${CONSUMER} $(hosting_field \"${CONSUMER}\" '.hosting.health')\"\n  fi\n}\n\n# consumer_back — started again: up and its channel attached\nconsumer_back() {\n  visitor_exec \"systemctl start ${CONSUMER_UNITS}\" > /dev/null 2>&1 || true\n  if wait_for 90 is_up \"${CONSUMER}\" && wait_for 60 consumer_connected; then\n    log_pass \"$1: ${CONSUMER} back, its channel attached\"\n  else\n    log_fail \"$1: health $(health_of \"${CONSUMER}\"), $(consumer_state | jq -c '{connected}')\"\n  fi\n}\n\n# restore_provider <renew|keep> — the provider's half stopped; the backup\n# copied over data.db and its WAL dropped (the backup is the whole\n# database) by the plugin's own account — root never acts on a path that\n# account controls; with <renew>, the restore step run as that account\n# under the unit's own protections (systemd-run: no network, the data\n# directory the only writable path); the half started. Prints the restore\n# step's output (its JSON line) and RESTORED.\nrestore_provider() {\n  timed_exec 180 multipass exec \"${AGENT_VM}\" -- sudo bash -c \"\n    set -e\n    systemctl stop ${PROVIDER_UNITS}\n    runuser -u ${PROVIDER_USER} -- sh -c 'cd ${PROVIDER_DATA} && cp -- e2e-backup.db data.db.restoring && rm -f data.db-wal data.db-shm && mv -f data.db.restoring data.db'\n    if [ '$1' = renew ]; then\n      argv=\\$(systemctl show -p ExecStart --value lamalibre-app-${PROVIDER}.service | sed -n 's/.*argv\\[\\]=\\([^;]*\\) ;.*/\\1/p')\n      systemd-run --wait --pipe --collect --quiet \\\\\n        -p User=${PROVIDER_USER} -p Group=${PROVIDER_USER} -p WorkingDirectory=${PROVIDER_DATA} \\\\\n        -p NoNewPrivileges=yes -p ProtectSystem=strict -p ReadWritePaths=${PROVIDER_DATA} \\\\\n        -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes -p PrivateNetwork=yes -p MemoryMax=256M \\\\\n        -E LAMASTE_APP_DATA_DIR=${PROVIDER_DATA} -E NODE_ENV=production \\\\\n        \\$argv --renew-peer-stream\n    fi\n    systemctl start ${PROVIDER_UNITS}\n    echo RESTORED\" 2>&1 || true\n}\n\n# provider_back — the provider's half answers health checks again\nprovider_back() {\n  if wait_for 120 is_up \"${PROVIDER}\"; then\n    log_pass \"$1: ${PROVIDER} up again\"\n  else\n    log_fail \"$1: health of ${PROVIDER} $(hosting_field \"${PROVIDER}\" '.hosting.health')\"\n  fi\n}\n",
+  "cleanupRaw": "",
+  "trailerRaw": "end_test\n"
+}

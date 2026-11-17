@@ -221,6 +221,24 @@ A provider that itself has an effective outgoing edge receives a delegation for 
 
 An offline consumer or provider simply waits: catching up from the cursor is the normal path.
 
+**A provider restored from a backup renews its stream (4.14.2).** A restored database takes the outbox back to the backup: its stream id and `seq` values are the backup's, so the outbox gives out again the `seq` values it had already given after the backup. A consumer whose cursor is past the restored head is told `stream_changed` by a relay from 4.14.2 on (see below). A consumer that was away until new events carried the head past its cursor is not told anything, whatever the relay: it continues from `seq` values that now name other events, and never sees the ones in between. So a provider's restore procedure gives its outbox a new stream before the agent half serves events again:
+
+```js
+import { DatabaseSync } from 'node:sqlite';
+import { renewPeerOutboxStream } from '@lamalibre/lamaste/agent';
+
+// The agent half stopped, its database restored: the plugin's restore step.
+const db = new DatabaseSync(path.join(dataDir, 'data.db'));
+renewPeerOutboxStream(db); // → { streamId, head, horizon }, or null: no outbox in this database
+db.close();
+```
+
+Run the restore step as the plugin's own account, with the agent half stopped and under the same protections as its unit — `systemd-run --wait --pipe -p User=<account> -p ProtectSystem=strict -p ReadWritePaths=<data dir> -p PrivateNetwork=yes …` — from a small entry point of its own rather than the half's main module. Copy the backup into place as that account too: the data directory is the account's, and root acting on a path there could be made to follow a link. `renewPeerOutboxStream` takes SQLite's write lock: with the half still writing it fails with SQLite's own busy error. A running half can call `outbox.renewStream()` instead; pulls it holds open answer at once. With a new stream id, every consumer's next pull is answered the gap `stream_changed` at the provider's head, whatever its cursor, and `onGap` reconciles through the provider's endpoints. The new stream begins at the head (`horizon` is raised to it); events are neither deleted nor renumbered. Both run in their own `BEGIN IMMEDIATE`: call them outside the application's transaction. Renew after anything that can take the database back: a restore, a copy from another machine, a rollback by snapshot. Renewing when nothing was restored costs the consumers one reconcile, and nothing else.
+
+A consumer **ahead of the head** — its cursor past the provider's head, as after a restore with nothing written since — is answered `stream_changed` at once from relays 4.14.2 on, renewed or not. An outbox answers such a pull with `to` at its head (before 4.14.2 it named the cursor), and the relay reads either answer as the head. On the cursor's own stream the relay then sets the consumer's floor to that head even when the floor was above it (a gap given after the backup): the events between no longer exist, and what the provider writes from there is written after the grant. A relay from 4.13 to 4.14.1 refuses both answers (`502 provider_unreachable`), so the consumer retries until the provider's head passes its cursor, and is then told `stream_changed` if the stream was renewed.
+
+The SDK backs off when gaps come one after another with no events between them (from 1 s, doubling to 30 s): each gap costs a reconcile through the provider's endpoints.
+
 ## A consumer's own edges
 
 A consumer's half can learn which of the scopes it consumes are granted to it before it calls (4.14.1), so a plugin that may use one of several providers knows which one it has.
@@ -271,7 +289,7 @@ const manager = await peers.json('directory:read', 'GET', `/people/${caller.user
 });
 ```
 
-`call()` returns `{ status, headers, body, buffer(), text(), json() }` with the body streaming; `json()` requires a 2xx JSON answer. A refusal or failure rejects with `PeerCallError` (`code` as in the table above, `status`, `retryAfter`, or `relay_unavailable` when no channel came within `attachWaitMs`, default 5 s, or the channel died under the call). The half PINGs its channel every 20 s, and also before a call on a channel it has not heard from for 5 s; one that does not answer within 10 s is dropped and its calls fail at once with `relay_unavailable` — a channel runs through chisel on both machines and can die without a FIN — and the relay attaches a new one. `from: request` passes on only the hop count, `onBehalfOf: request` the delegation too.
+`call()` returns `{ status, headers, body, finished(), buffer(), text(), json() }` with the body streaming; `json()` requires a 2xx JSON answer. A body counts only when the provider ended it: `buffer()`, `text()` and `json()` reject with `aborted` when the call's `signal` aborted it, and with `truncated` when its stream was reset before its end (the provider failed mid-body, the relay ended the answer because the call was no longer allowed or the provider's body went idle, the channel was dropped) — never resolve with what arrived so far. An HTTP/2 stream closed by a reset ends its readable side without an error, so a caller reading `body` itself awaits `finished()` after the end, which rejects the same way. A call aborted before its answer rejects with `aborted` too. A refusal or failure rejects with `PeerCallError` (`code` as in the table above, `status`, `retryAfter`, or `relay_unavailable` when no channel came within `attachWaitMs`, default 5 s, or the channel died under the call). The half PINGs its channel every 20 s, and also before a call on a channel it has not heard from for 5 s; one that does not answer within 10 s is dropped and its calls fail at once with `relay_unavailable` — a channel runs through chisel on both machines and can die without a FIN — and the relay attaches a new one. `from: request` passes on only the hop count, `onBehalfOf: request` the delegation too.
 
 A provider:
 

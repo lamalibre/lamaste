@@ -69,8 +69,10 @@ export interface PeerOutboxOptions {
   /** The application's connection: `publish` runs on it, inside its transactions. */
   readonly db: PeerSqlDatabase;
   /**
-   * A read-only connection to the same database file, for pulls. Without
-   * it, `dbPath` is opened read-only with `node:sqlite`.
+   * A dedicated read-only connection to the same database file, for pulls
+   * — never the application's own (`db`): each pull reads in a transaction
+   * of its own on it. Without it, `dbPath` is opened read-only with
+   * `node:sqlite`.
    */
   readonly reader?: PeerSqlDatabase | undefined;
   /** The database file, for the reader the outbox opens itself. */
@@ -112,6 +114,12 @@ export interface PeerOutbox {
   state(): PeerOutboxState;
   /** Answer a pull (waiting up to `request.waitMs` for an event of its scope). */
   pull(request: PeerEventsPullRequest): Promise<PeerEventsPullAnswer>;
+  /**
+   * Start a new stream: see {@link renewPeerOutboxStream}. Pulls held open
+   * answer at once with the new stream id. Runs its own transaction: call
+   * it outside the application's.
+   */
+  renewStream(): PeerOutboxState;
   /** Delete events past retention (never the newest); returns how many. */
   prune(): number;
   /** Stop the pruning timer and close a reader the outbox opened. */
@@ -151,6 +159,77 @@ interface OutboxRow {
   key: unknown;
   data: unknown;
   at: unknown;
+}
+
+/**
+ * Give the outbox in `db` a new stream id: the step a provider runs after
+ * its database was restored from a backup (or copied, or rolled back by any
+ * other means), before its agent half serves events again.
+ *
+ * Why: a restored outbox reissues `seq` values it had already given out,
+ * under the stream id it had then. A consumer whose cursor is ahead of the
+ * restored head is told `stream_changed`, but one that was away until new
+ * events carried the head past its cursor would continue from reissued
+ * values — events it never sees. With a new stream id every consumer's
+ * next pull gets the gap `stream_changed` at the head, whatever its cursor,
+ * and reconciles through the provider's endpoints. Relays from 4.13 on
+ * answer it so; nothing on the relay changes.
+ *
+ * The new stream begins at the head: `horizon` is raised to it, so the
+ * events already in the table belong to the stream that was. Events are
+ * neither deleted nor renumbered. Runs in its own `BEGIN IMMEDIATE`
+ * (call it outside the application's transaction); works on a connection
+ * with no outbox open — a restore script may run it while the agent half
+ * is stopped. Returns the new position, or null when the database holds no
+ * outbox (its first `createPeerOutbox` makes a stream of its own).
+ */
+export function renewPeerOutboxStream(db: PeerSqlDatabase): PeerOutboxState | null {
+  try {
+    db.exec('BEGIN IMMEDIATE');
+  } catch (err: unknown) {
+    // Inside the application's transaction: say so. Anything else — the
+    // database busy, another process writing — is SQLite's own error.
+    if (err instanceof Error && /within a transaction/i.test(err.message)) {
+      throw new Error(
+        "Renewing the peer stream runs its own transaction: call it outside the application's",
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  try {
+    const table = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get('lamaste_peer_stream');
+    const row = table
+      ? db.prepare('SELECT stream_id FROM lamaste_peer_stream WHERE id = 1').get()
+      : undefined;
+    if (!row) {
+      db.exec('COMMIT');
+      return null;
+    }
+    const head = toNumber(
+      (
+        db.prepare('SELECT COALESCE(MAX(seq), 0) AS head FROM lamaste_peer_outbox').get() as {
+          head: unknown;
+        }
+      ).head,
+    );
+    const streamId = crypto.randomUUID();
+    db.prepare('UPDATE lamaste_peer_stream SET stream_id = ?, horizon = ? WHERE id = 1').run(
+      streamId,
+      head,
+    );
+    db.exec('COMMIT');
+    return { streamId, head, horizon: head };
+  } catch (err: unknown) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // Already rolled back.
+    }
+    throw err;
+  }
 }
 
 /** Open a read-only `node:sqlite` connection to `path`. */
@@ -199,7 +278,23 @@ export async function createPeerOutbox(opts: PeerOutboxOptions): Promise<PeerOut
 
   let wake: (() => void)[] = [];
 
-  function state(): PeerOutboxState {
+  /**
+   * Run `fn` in one read transaction on the reader: the head, the stream
+   * and the events it reads are of one snapshot — a renewal or a prune
+   * committing in between cannot pair one moment's head with another's
+   * stream or horizon. Synchronous, so nothing else runs on the reader
+   * meanwhile.
+   */
+  function snapshot<T>(fn: () => T): T {
+    r.exec('BEGIN');
+    try {
+      return fn();
+    } finally {
+      r.exec('COMMIT');
+    }
+  }
+
+  function readState(): PeerOutboxState {
     const head = toNumber((readHead.get() as { head: unknown } | undefined)?.head);
     const row = readStream.get() as { stream_id: unknown; horizon: unknown } | undefined;
     if (!row || typeof row.stream_id !== 'string') {
@@ -208,11 +303,20 @@ export async function createPeerOutbox(opts: PeerOutboxOptions): Promise<PeerOut
     return { streamId: row.stream_id, head, horizon: toNumber(row.horizon) };
   }
 
+  function state(): PeerOutboxState {
+    return snapshot(readState);
+  }
+
   function readOnce(request: PeerEventsPullRequest): PeerEventsPullAnswer {
-    // The head first: nothing committed after it is read or skipped.
-    const position = state();
+    return snapshot(() => readAt(request));
+  }
+
+  function readAt(request: PeerEventsPullRequest): PeerEventsPullAnswer {
+    const position = readState();
     if (request.max === 0 || request.after >= position.head) {
-      return { ...position, to: Math.max(request.after, 0), events: [] };
+      // `to` never passes the head: a cursor past it (a restored database)
+      // is the relay's to answer with a gap.
+      return { ...position, to: Math.min(request.after, position.head), events: [] };
     }
     const placeholders = request.types.map(() => '?').join(', ');
     const rows = r
@@ -284,11 +388,33 @@ export async function createPeerOutbox(opts: PeerOutboxOptions): Promise<PeerOut
 
     state,
 
+    renewStream() {
+      const renewed = renewPeerOutboxStream(db);
+      if (!renewed) throw new Error('The peer outbox has no stream');
+      // Held pulls re-read the stream now: their answer carries the new id.
+      const waiting = wake;
+      wake = [];
+      for (const fn of waiting) setImmediate(fn);
+      return renewed;
+    },
+
     async pull(request) {
       const deadline = now() + Math.min(request.waitMs, PEER_EVENTS_WAIT_MAX_MS);
+      let streamId: string | null = null;
       for (;;) {
         const answer = readOnce(request);
-        if (answer.events.length > 0 || request.max === 0 || now() >= deadline) return answer;
+        // A renewed stream, or a cursor past the head, ends the wait: the
+        // relay answers its gap now.
+        streamId ??= answer.streamId;
+        if (
+          answer.events.length > 0 ||
+          request.max === 0 ||
+          answer.streamId !== streamId ||
+          request.after > answer.head ||
+          now() >= deadline
+        ) {
+          return answer;
+        }
         await new Promise<void>((resolve) => {
           const timer = setTimeout(done, Math.min(WAIT_TICK_MS, Math.max(0, deadline - now())));
           function done(): void {

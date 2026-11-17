@@ -829,6 +829,12 @@ test('the events floor is kept in the state store and only rises for one epoch a
   await lib.recordEventFloor('ghost', 'dir:read', '2:aa', stream, 1);
   assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), 1, 'replaced');
   assert.equal(await lib.eventFloor('ghost', 'dir:read', '1:aa', stream), null);
+  // A provider's head gone back on the same stream: reset follows it down.
+  await lib.recordEventFloor('ghost', 'dir:read', '2:aa', stream, 9);
+  await lib.recordEventFloor('ghost', 'dir:read', '2:aa', stream, 4, { reset: true });
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), 4, 'reset lowers it');
+  await lib.recordEventFloor('ghost', 'dir:read', '2:aa', stream, 2);
+  assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), 4, 'and only reset does');
   // A subscription no longer effective loses its floor; leave keeps its own.
   assert.ok((await lib.pruneEventFloors()) >= 1);
   assert.equal(await lib.eventFloor('ghost', 'dir:read', '2:aa', stream), null);
