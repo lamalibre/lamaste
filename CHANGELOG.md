@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 4.14.2 candidate
+## [4.14.2] - 2026-11-17
 
 Run on rodeo 2026-11-16 on fresh VMs, the candidate on a development Feria only: three-VM 01 (55), 58 (52), 60 (41), 61 (35) passed; 59 failed 4 of 44 once (a call on a user's behalf found the consumer's channel not attached yet) and passed 44 of 44 on its rerun; 69 failed one assertion of 65 (the spec read the consumer's events while it was stopped — fixed) and passed 62 of 62 on its rerun.
 
