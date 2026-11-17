@@ -19,7 +19,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { RELAY_TLS_DIRECTIVES } from '@lamalibre/lamaste';
+import {
+  ACCESS_LOG_DIRECTIVE,
+  ACCESS_LOG_FILE,
+  RELAY_TLS_DIRECTIVES,
+  renderRequestPrivacyConf,
+} from '@lamalibre/lamaste';
 import { isDuplicateDefaultServer } from '../src/lib/http-redirect.js';
 import {
   HTTPS_DEFAULT_SITE,
@@ -39,6 +44,8 @@ test('the catch-all: the default 443 server, as the relay listens, without a cer
   assert.deepEqual(directives, [
     'server {',
     LISTEN,
+    // Logged as every server of the relay: the path, never the query.
+    ACCESS_LOG_DIRECTIVE,
     'server_name _;',
     // The socket's default server sets every name's protocol floor.
     ...RELAY_TLS_DIRECTIVES,
@@ -148,7 +155,9 @@ test(
       assert.ok(catchAll.includes(LISTEN));
       await writeFile(
         path.join(prefix, 'catch-all.conf'),
-        catchAll.replace(LISTEN, `listen 127.0.0.1:${port} ssl default_server;`),
+        catchAll
+          .replace(LISTEN, `listen 127.0.0.1:${port} ssl default_server;`)
+          .replace(ACCESS_LOG_FILE, path.join(prefix, 'logs', 'access.log')),
       );
       // A relay site, listed before the catch-all as nginx would read the
       // sites alphabetically: without default_server it would be the default.
@@ -166,6 +175,7 @@ test(
           '',
         ].join('\n'),
       );
+      await writeFile(path.join(prefix, 'request-privacy.conf'), renderRequestPrivacyConf());
       const conf = path.join(prefix, 'nginx.conf');
       await writeFile(
         conf,
@@ -183,6 +193,7 @@ test(
           `  fastcgi_temp_path ${path.join(prefix, 'tmp-fcgi')};`,
           `  uwsgi_temp_path ${path.join(prefix, 'tmp-uwsgi')};`,
           `  scgi_temp_path ${path.join(prefix, 'tmp-scgi')};`,
+          `  include ${path.join(prefix, 'request-privacy.conf')};`,
           `  include ${path.join(prefix, 'known.conf')};`,
           `  include ${path.join(prefix, 'catch-all.conf')};`,
           '}',

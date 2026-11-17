@@ -338,6 +338,15 @@ const RULES = {
         a.length >= 1 && a[0] === '443' && a.slice(1).every((f) => f === 'ssl' || f === 'http2'),
     },
     server_name: { args: each(HOSTNAME_RE) },
+    // The relay's own access log, in the format that keeps no query, no
+    // client-chosen username and no referrer (core request-privacy.ts; the
+    // format comes from create-lamaste's http-level file): exactly this
+    // file and this format, nothing more — nginx's root master opens the
+    // file named here, and a format is never defined in a vhost.
+    access_log: {
+      args: (a) =>
+        a.length === 2 && a[0] === '/var/log/nginx/access.log' && a[1] === 'lamaste_noquery',
+    },
     ssl_certificate: {
       args: (a) => a.length === 1 && CERT_FILE_RE.test(a[0]) && !hasDotDotSegment(a[0]),
     },
@@ -482,9 +491,37 @@ function locationArgs(a) {
   return a.length === 2 && ['=', '~', '~*', '^~'].includes(a[0]) && a[1].length <= 512;
 }
 
+/**
+ * Variables whose names begin with `lamaste_` belong to the http-level
+ * files create-lamaste installs as root: `$lamaste_request_path` (what the
+ * access log and Authelia see of a request: its path, never its query) and
+ * `$lamaste_backend_cookie` (the cookies a backend gets, never Authelia's
+ * session). A vhost may read them but never set them — nginx lets the last
+ * definition of a variable win, so a vhost's own would quietly put the
+ * query back into the log or the session cookie into a backend. Every way
+ * an allowed directive can set a variable is refused for these names: the
+ * target of a `map`, the variable of `auth_request_set`, and a named
+ * regex capture (`(?<name>…)`, `(?P<name>…)`, `(?'name'…)`) in any token —
+ * a `location`, `if`, `rewrite` or `map` key defines its captures as
+ * variables. nginx folds variable names to lower case, and so does this.
+ */
+const ROOT_VARIABLE_RE = /^\$lamaste_/i;
+const ROOT_CAPTURE_RE = /\(\?(?:<|P<|')lamaste_/i;
+
+function assertNoRootVariable(d) {
+  const sets =
+    (d.name === 'map' && d.args.length === 2 && ROOT_VARIABLE_RE.test(d.args[1])) ||
+    (d.name === 'auth_request_set' && d.args.length >= 1 && ROOT_VARIABLE_RE.test(d.args[0])) ||
+    [d.name, ...d.args].some((token) => ROOT_CAPTURE_RE.test(token));
+  if (sets) {
+    throw new UsageError(`vhost line ${d.line}: a vhost may not set a $lamaste_ variable`);
+  }
+}
+
 function validateDirectives(directives, context) {
   const rules = RULES[context];
   for (const d of directives) {
+    assertNoRootVariable(d);
     if (context === 'map') {
       // map entries are "key value;" pairs. `include` inside a map reads a
       // file (as root) into the map's values — refused, like any block.

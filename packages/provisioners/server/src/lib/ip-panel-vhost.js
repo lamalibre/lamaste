@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
+import { ACCESS_LOG_DIRECTIVE, SITE_UPLOAD_MAX_REQUEST_MIB } from '@lamalibre/lamaste';
 import { writeFileNoFollow } from './ownership.js';
 
 /** Site name of the IP-based panel vhost (`https://<ip>:9292`). */
@@ -37,6 +37,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 9292 ssl;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name _;
 
     ssl_certificate ${pkiDir}/self-signed.pem;

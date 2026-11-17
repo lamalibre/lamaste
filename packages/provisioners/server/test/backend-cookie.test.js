@@ -470,7 +470,7 @@ test('installed before the panel writes a tunnel vhost — fresh install and red
   const redeploy = await subtaskTitles(redeployTasks);
   assert.equal(redeploy.indexOf(MAP_STEP), 1, redeploy.join(' | '));
   assert.equal(redeploy[0], 'Checking versions');
-  assert.equal(redeploy[2], 'Stopping panel services');
+  assert.ok(redeploy.indexOf(MAP_STEP) < redeploy.indexOf('Stopping panel services'));
   assert.ok(
     redeploy.indexOf(MAP_STEP) < redeploy.indexOf('Reloading systemd and restarting panel'),
   );

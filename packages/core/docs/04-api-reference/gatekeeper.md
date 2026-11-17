@@ -719,6 +719,24 @@ GET /authz/refusal/:fqdn
 
 What an Authelia-protected static site answers a signed-in user Authelia refused with (the site asks Authelia directly, not Gatekeeper). Always 403 with the refusal page; reads no session and decides nothing.
 
+### Sign-in Redirect (nginx `error_page 401`)
+
+```
+GET /authz/sign-in/:domain/:fqdn
+X-Original-URL: https://<fqdn><the raw request target>
+Host: <fqdn>
+```
+
+Where every page that asks for a session sends a request without one (`error_page 401 = /internal/lamaste/sign-in;`): a tunnel's pages (`authenticated` and `restricted`), a plugin's web-surface shell, an Authelia-protected static site, the sign-in host's change-password page (`/account/password`) and the desktop's `/api/user-access/authorize`. A user surface's API never comes here — it answers JSON `401`. The vhost names the domain whose sign-in it uses and its own host in the path (its generator knows both), and `X-Original-URL` is built from nginx's `$request_uri` — the target as the client sent it, query included. The answer is `302` to `https://auth.<domain>/?rd=<the whole URL>`, `Cache-Control: no-store`, the URL percent-encoded byte for byte as one parameter (Node holds a header value as Latin-1, one character per byte, so a client's UTF-8 is encoded as sent, never twice): an `&` in the query no longer ends `rd`, and nothing in it can leave the parameter. Bytes above `0x7e` and a raw `#` — both of which nginx accepts in a request line — are carried as they are.
+
+It reads no session, no projection (`domains.json`) and asks nobody; it refuses (`403`) when the path's host is not the domain or under it, when `X-Original-URL` is not an absolute URL whose host (with any port) is the path's host, or `Host` names another one — as every route here — or when the URL does not continue right after the host with nothing, `/` or `?`.
+
+**Gatekeeper is required for signing in.** The sign-in redirect of protected static sites, of the auth portal's change-password page and `/api/user-access/authorize`, of tunnels and of web-surface shells is this route: while Gatekeeper is down, a page without a session gets nginx's `502` instead of the sign-in (tunnels and shells already need it to authorize). `create-lamaste`'s redeploy starts Gatekeeper whenever it installs it, whether or not it was running before — before the panel, best effort — and its last step proves it ready (`GET /health`): a Gatekeeper that is masked, will not start or does not answer fails that step with a clear message while the panel keeps running; one disabled at boot is started and reported. These answers carry no `x-ratelimit-*` headers (none of the authorization routes do); a `429` keeps `retry-after`.
+
+Authelia's portal receives the whole URL as `rd` and logs it at `debug` only; the relay runs Authelia at `info`.
+
+**What Authelia is told.** Every Gatekeeper route that asks Authelia about a session sends it `X-Original-URL` up to the first `?` or `#` — cut from the raw string, never re-encoded — while it keeps the whole original URL for its own checks (a user surface's target and the assertion's path, byte for byte). Lamaste writes no `resources` rules into Authelia's access control, so Authelia's answer never depends on the query.
+
 ### Branded pages
 
 Each page also speaks the **page language** of the host's domain ([Domains API — Page language](domains.md)): `lang`, the title, the sentences, the labels and the access-request page's message templates, from Lamaste's catalogue (`@lamalibre/lamaste` `page-messages`). The language is the projection's — `domains.json` carries `language` for a domain that has one; a missing value, or one that is not a page language, is "not set" and never makes the projection invalid (membership fails closed, presentation fails open). A domain without one, and a host under none of the relay's domains, get English. The copy buttons hold their words in `data-label` / `data-copied` and copy the template's own element, so the page's script is one text for every language. The templates [Check Access](#check-access) returns as JSON stay English.

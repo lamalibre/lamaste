@@ -17,7 +17,17 @@
  * - from 4.5 the panel serves plugins' user surfaces to a relay assertion
  *   Gatekeeper signs, so every vhost that proxies a browser to the panel —
  *   the panel's own and the auth portal — clears one a client sent, and so
- *   does every tunnel vhost that does not set Gatekeeper's.
+ *   does every tunnel vhost that does not set Gatekeeper's;
+ * - every server block logs the path of a request, never its query, its
+ *   client-chosen username or its referrer (`access_log … lamaste_noquery;`,
+ *   core `request-privacy.ts`), and a location that asks Authelia directly
+ *   tells it the path alone and sends a request without a session to
+ *   Gatekeeper's sign-in redirect. Every vhost the panel writes is rendered
+ *   again here — chisel's (`tunnel.<primary>`) too, written otherwise only
+ *   at onboarding — and plugins' web surfaces by `reconcileWebSurfaces`;
+ *   create-lamaste's redeploy refreshes its own (the IP panel, the port-80
+ *   redirect, the 443 catch-all) and installs the log format before the
+ *   panel restarts, since nginx refuses a vhost naming it without.
  *
  * Each installed vhost is rendered again from state, on the certificate
  * directory the installed file names (a wildcard certificate stays a wildcard
@@ -49,6 +59,7 @@ import { domainOfHost, tunnelUserSurfaceRoutes } from '@lamalibre/lamaste';
 import { tunnelHost, vhostTunnelHost, withTunnelLock } from '@lamalibre/lamaste/server';
 import {
   LEGACY_AUTH_VHOST,
+  CHISEL_TUNNEL_VHOST,
   PANEL_DOMAIN_VHOST,
   agentPanelVhostName,
   appVhostName,
@@ -60,12 +71,14 @@ import {
   renameVhosts,
   renderAgentPanelVhost,
   renderAuthVhost,
+  renderChiselTunnelVhost,
   renderPanelVhost,
   renderStaticSiteVhost,
   renderTunnelVhost,
   vhostCertDir,
 } from './nginx.js';
 import { authVhostInputs } from './auth-branding.js';
+import { logsWithoutQueries } from './request-privacy-check.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 import { readSites, readTunnels } from './state.js';
 
@@ -149,6 +162,15 @@ function authenticates(config) {
   return /^\s*auth_request\s/m.test(config);
 }
 
+/**
+ * True when `config` lacks the relay's access log in one of its server
+ * blocks: nginx's combined log, queries included, applies there — the rule
+ * the request-privacy check reads the enabled vhosts with.
+ */
+function logsQueries(config) {
+  return !logsWithoutQueries(config);
+}
+
 function newResult() {
   return { rewritten: [], unchanged: 0, skipped: [], failed: [] };
 }
@@ -178,14 +200,21 @@ async function reconcileOne(
       if (reportMissing) result.skipped.push({ vhost: label, reason: 'no vhost installed' });
       return;
     }
+    // A vhost left as it is keeps what it logs: said with the skip.
+    const skip = (reason) =>
+      result.skipped.push({
+        vhost: label,
+        reason,
+        ...(logsQueries(installed) ? { logsQueries: true } : {}),
+      });
     const certDir = vhostCertDir(installed);
     if (!certDir) {
-      result.skipped.push({ vhost: label, reason: 'installed vhost names no certificate' });
+      skip('installed vhost names no certificate');
       return;
     }
     const expected = render(certDir);
     if (!expected) {
-      result.skipped.push({ vhost: label, reason: 'state cannot be rendered' });
+      skip('state cannot be rendered');
       return;
     }
     if (expected.config === installed) {
@@ -193,11 +222,9 @@ async function reconcileOne(
       return;
     }
     if (keepAuthentication && authenticates(expected.config) !== authenticates(installed)) {
-      result.skipped.push({
-        vhost: label,
-        reason:
-          'installed vhost and state disagree on whether it authenticates; reconfigure it to rewrite the vhost',
-      });
+      skip(
+        'installed vhost and state disagree on whether it authenticates; reconfigure it to rewrite the vhost',
+      );
       return;
     }
     await deps.installVhost(expected.name, expected.config, expected.fqdn, {
@@ -219,7 +246,10 @@ function logResult(log, what, result) {
     log.info({ rewritten: result.rewritten }, `Rewrote ${what} vhosts`);
   }
   if (result.skipped.length > 0) {
-    log.warn({ skipped: result.skipped }, `Left ${what} vhosts as they are`);
+    const logging = result.skipped.some((s) => s.logsQueries)
+      ? " — those marked logsQueries keep nginx's combined access log, query strings and referrers included"
+      : '';
+    log.warn({ skipped: result.skipped }, `Left ${what} vhosts as they are${logging}`);
   }
   for (const failure of result.failed) {
     log.error(failure, `Failed to rewrite ${what} vhost; the previous vhost was restored`);
@@ -354,10 +384,10 @@ const defaultSiteDeps = {
 
 /**
  * Reconcile the vhosts that proxy a browser to the panel or ask Authelia
- * directly: the panel's own (`panel.<primary>`), every active domain's auth
- * portal (`auth.<domain>`, with the domain's brand and language as its
- * records say) and
- * every static site but a plugin's web surface. Call it before the panel
+ * directly: the panel's own (`panel.<primary>`), chisel's
+ * (`tunnel.<primary>`), every active domain's auth portal (`auth.<domain>`,
+ * with the domain's brand and language as its records say) and every
+ * static site but a plugin's web surface. Call it before the panel
  * listens — then nothing can change a site or a brand meanwhile.
  *
  * @param {Parameters<typeof logResult>[0]} log
@@ -376,6 +406,16 @@ export async function reconcileSiteVhosts(log, domains, deps = defaultSiteDeps) 
         label: `panel.${primary}`,
         render: (certDir) => renderPanelVhost(primary, certDir),
         enabled: () => deps.isSiteEnabled(PANEL_DOMAIN_VHOST),
+      },
+      result,
+      deps,
+    );
+    await reconcileOne(
+      {
+        name: CHISEL_TUNNEL_VHOST,
+        label: `tunnel.${primary}`,
+        render: (certDir) => renderChiselTunnelVhost(primary, certDir),
+        enabled: () => deps.isSiteEnabled(CHISEL_TUNNEL_VHOST),
       },
       result,
       deps,

@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
+import { ensureRequestPrivacyConf } from '../lib/request-privacy.js';
 import {
   ensureHttpRedirect,
   ensureHttpsDefault,
@@ -63,6 +64,18 @@ ssl_verify_client optional;
         await writeFile('/etc/nginx/snippets/lamalibre-lamaste-mtls.conf', mtlsSnippet);
 
         subtask.output = 'mTLS snippet written to /etc/nginx/snippets/lamalibre-lamaste-mtls.conf';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Keeping queries out of the access log and Authelia',
+      task: async (_ctx, subtask) => {
+        // Before the first vhost: every server block the relay writes — the
+        // IP panel's next — logs in this file's format, and nginx refuses
+        // a vhost naming a format it does not know. nginx is (re)started by
+        // the last task; no reload here.
+        await ensureRequestPrivacyConf({ reload: false });
+        subtask.output = 'nginx logs the path of a request, never its query or referrer';
       },
       rendererOptions: { persistentOutput: true },
     },
