@@ -9,6 +9,8 @@ import {
   APPLE_APP_SITE_ASSOCIATION_PATH,
   ASSET_LINKS_PATH,
   NATIVE_CLIENT_ID_PREFIX,
+  NATIVE_LOOPBACK_HOST,
+  isNativeLoopbackPath,
 } from '@lamalibre/lamaste/native-apps';
 
 /** Entries of a text field: split on commas, spaces and line breaks; empty ones dropped. */
@@ -105,15 +107,40 @@ export function grantEndText(reason) {
   return END_REASONS[reason] ?? reason ?? '';
 }
 
+/** A client's kind: a client from before kinds existed is a mobile one. */
+export function nativeClientKindOf(client) {
+  return client?.kind === 'desktop' ? 'desktop' : 'mobile';
+}
+
 /**
- * The application hosts a native client can be registered for — plugin-owned
- * sites and tunnels bound to plugin routes — less those that have one.
+ * The redirect URIs a desktop client's loopback paths make, for the form's
+ * preview: `http://127.0.0.1<path>` (the app adds the port it listens on);
+ * paths that are not valid are left out — the panel refuses them.
+ */
+export function loopbackRedirectPreview(paths) {
+  return paths.filter(isNativeLoopbackPath).map((path) => `http://${NATIVE_LOOPBACK_HOST}${path}`);
+}
+
+/**
+ * The application hosts a client of `clientKind` can be registered for —
+ * plugin-owned sites and tunnels bound to plugin routes — less those that
+ * have one of that kind (a host holds at most one mobile and one desktop
+ * client).
  *
- * @param {{ tunnels?: object[], sites?: object[], clients?: object[] }} input
+ * @param {{ tunnels?: object[], sites?: object[], clients?: object[], clientKind?: 'mobile' | 'desktop' }} input
  * @returns {Array<{ kind: 'site' | 'tunnel', id: string, fqdn: string, label: string }>}
  */
-export function nativeHostChoices({ tunnels = [], sites = [], clients = [] }) {
-  const taken = new Set(clients.map((c) => `${c.hostKind}:${c.hostId}`));
+export function nativeHostChoices({
+  tunnels = [],
+  sites = [],
+  clients = [],
+  clientKind = 'mobile',
+}) {
+  const taken = new Set(
+    clients
+      .filter((c) => nativeClientKindOf(c) === clientKind)
+      .map((c) => `${c.hostKind}:${c.hostId}`),
+  );
   const hosts = [];
   for (const site of sites) {
     if (!site?.owner || typeof site.fqdn !== 'string') continue;
