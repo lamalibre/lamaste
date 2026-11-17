@@ -46,8 +46,10 @@ import {
   NATIVE_ACCESS_TOKEN_MINUTES,
   NATIVE_LIFETIME_DAYS,
   isNativeClientId,
+  isNativeLoopbackPath,
   isNativeRedirectPath,
   nativeAudience,
+  nativeLoopbackRedirectUris,
   nativeRedirectUris,
 } from '../native-apps.js';
 import { externalGroup, memberGroup, oidcClientGroup, siteGroup } from '../owned-groups.js';
@@ -1475,20 +1477,55 @@ export interface OidcProviderOptions {
 
 /**
  * A native client as Authelia is told of it: its id, the name its consent
- * screen shows, its application host and that host's domain, its redirect
- * paths on the host, and its lifetimes (native-apps-design.md D2).
+ * screen shows, its application host and that host's domain, its lifetimes
+ * (native-apps-design.md D2), and its redirects by kind — a mobile client's
+ * paths on the host, a desktop client's loopback paths
+ * (desktop-native-clients-design.md D2).
  */
-export interface AutheliaNativeClient {
+export type AutheliaNativeClient = AutheliaNativeClientCommon &
+  (
+    | {
+        /** Absent — a caller before kinds — is a mobile client. */
+        readonly kind?: 'mobile';
+        readonly redirectPaths: readonly string[];
+      }
+    | { readonly kind: 'desktop'; readonly loopbackPaths: readonly string[] }
+  );
+
+interface AutheliaNativeClientCommon {
   readonly clientId: string;
   readonly name: string;
   /** The application host's hostname (lower case). */
   readonly fqdn: string;
   /** The domain the host lies under. */
   readonly domain: string;
-  readonly redirectPaths: readonly string[];
   readonly accessTokenMinutes: number;
   /** The refresh token's lifetime at Authelia — renewed at every rotation, so the idle lifetime. */
   readonly idleDays: number;
+}
+
+/** The redirect URIs a native client is rendered with, by its kind. */
+function nativeClientRedirectUris(client: AutheliaNativeClient): string[] {
+  return client.kind === 'desktop'
+    ? nativeLoopbackRedirectUris(client.loopbackPaths)
+    : nativeRedirectUris(client.fqdn, client.redirectPaths);
+}
+
+/** Whether a native client's redirect paths are there and valid for its kind. */
+function nativeClientPathsValid(client: AutheliaNativeClient): boolean {
+  if (client.kind === 'desktop') {
+    return (
+      Array.isArray(client.loopbackPaths) &&
+      client.loopbackPaths.length > 0 &&
+      client.loopbackPaths.every(isNativeLoopbackPath)
+    );
+  }
+  if (client.kind !== undefined && client.kind !== 'mobile') return false;
+  return (
+    Array.isArray(client.redirectPaths) &&
+    client.redirectPaths.length > 0 &&
+    client.redirectPaths.every(isNativeRedirectPath)
+  );
 }
 
 /**
@@ -1650,8 +1687,9 @@ export function renderOidcClientPolicies(
  * `openid offline_access profile`, RS256 JWT access tokens carrying
  * `preferred_username` (its claims policy, named after it), its host's
  * audience granted without being asked for, explicit consent (Authelia asks
- * anyway for `offline_access`), its redirect URIs on its host, its own
- * lifespan and its own authorization policy — both named
+ * anyway for `offline_access`), its redirect URIs (on its host; for a
+ * desktop client on the device's loopback), its own lifespan and its own
+ * authorization policy — both named
  * {@link oidcClientPolicyName}. Throws on anything malformed. Pure.
  */
 export function renderNativeClient(client: AutheliaNativeClient): Record<string, unknown> {
@@ -1666,7 +1704,7 @@ export function renderNativeClient(client: AutheliaNativeClient): Record<string,
     lifespan: policy,
     require_pkce: true,
     pkce_challenge_method: 'S256',
-    redirect_uris: nativeRedirectUris(client.fqdn, client.redirectPaths),
+    redirect_uris: nativeClientRedirectUris(client),
     scopes: [...NATIVE_CLIENT_SCOPES],
     grant_types: [...NATIVE_CLIENT_GRANT_TYPES],
     response_types: ['code'],
@@ -1688,8 +1726,7 @@ function assertNativeClient(client: AutheliaNativeClient): void {
   if (
     typeof client.name !== 'string' ||
     client.name.length === 0 ||
-    client.redirectPaths.length === 0 ||
-    !client.redirectPaths.every(isNativeRedirectPath)
+    !nativeClientPathsValid(client)
   ) {
     throw new Error(`Native client "${client.clientId}" is malformed`);
   }

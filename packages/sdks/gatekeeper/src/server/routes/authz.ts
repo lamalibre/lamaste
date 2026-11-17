@@ -16,7 +16,7 @@ import {
   isLamasteOwnedGroup,
   isUserSurfaceUrl,
   nativeAudience,
-  nativeClientOfHost,
+  nativeClientsOfHost,
   signRelayAssertion,
   userSurfaceHostByFqdn,
   userSurfaceHostServing,
@@ -959,7 +959,7 @@ export function isBearerScheme(header: unknown): boolean {
  * Authenticate a native app's access token on the user surface of `fqdn`
  * (native-apps-design.md D3, R6): `Authorization: Bearer <JWS>`, verified
  * against the relay issuer's keys, issued by the portal of the host's domain
- * to the host's native client (the panel's projection) for the host's
+ * to one of the host's native clients (the panel's projection) for the host's
  * audience. On an unknown key id or a bad signature the key set is fetched
  * again (at most every 30 s) and the token checked once more. 503 while no
  * key set was ever read (Authelia unreachable): an app told 401 would throw
@@ -972,8 +972,11 @@ async function authenticateBearer(
 ): Promise<BearerOutcome> {
   const token = bearerTokenOf(request.headers['authorization']);
   if (token === null) return { ok: false, status: 401, reason: 'not_a_bearer_token' };
+  // At most one client of each kind (mobile, desktop); a token of either
+  // serves the host. They lie under the host's one domain.
   const clients = fastify.getNativeClients();
-  const client = clients ? nativeClientOfHost(clients, fqdn) : null;
+  const hostClients = clients ? nativeClientsOfHost(clients, fqdn) : [];
+  const client = hostClients[0];
   if (!client) return { ok: false, status: 401, reason: 'no_native_client' };
   const portal = `auth.${client.domain}`;
   const keyCache = fastify.getIssuerKeys();
@@ -983,7 +986,7 @@ async function authenticateBearer(
       keys: keyCache.current() ?? [],
       issuer: `https://${portal}`,
       audience: nativeAudience(fqdn),
-      clientId: client.clientId,
+      clientId: hostClients.map((c) => c.clientId),
     });
   if (keyCache.current() === null)
     return { ok: false, status: 503, reason: 'issuer_keys_unavailable' };
