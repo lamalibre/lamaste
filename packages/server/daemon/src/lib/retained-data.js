@@ -17,7 +17,8 @@ import { getStateDb } from './state-db.js';
 
 /**
  * A record as the API shows it: what the table keeps, and what a purge
- * deletes on the agent — the data directory and the account, both derived
+ * deletes on the agent — the data directory, the key directory (if the
+ * agent half had one) and the account, all derived
  * from the route — so a panel or CLI confirmation can name them.
  */
 function rowToRecord(row) {
@@ -29,6 +30,8 @@ function rowToRecord(row) {
     since: row.since,
     operation: row.operation,
     dataDir: APPHOST_PATHS.dataDir(row.route),
+    // Its key directory, if the half had one: a purge deletes it too.
+    keysDir: APPHOST_PATHS.keysDir(row.route),
     serviceUser: appServiceUser(row.route),
   };
 }

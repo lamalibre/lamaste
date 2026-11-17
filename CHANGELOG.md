@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A key directory for an agent half, apart from its data.** An agent half whose manifest sets `agent.service.keysDir: true` gets `/var/lib/lamalibre/app-keys/<route>` (0700, its account's), named `LAMASTE_APP_KEYS_DIR` in its unit and writable there. It is a sibling tree of the data directories, so `/var/lib/lamalibre/apps` can be backed up without the keys that sign for or unseal what the data holds. The directory is made at install (taken back if the install fails), kept across versions and on removal, made again before a unit that names it starts, and deleted by a purge through its own root-only trash. A key directory with no owner record is never taken over. The app host helper speaks protocol 4. `apphostProtocolFor` now takes the agent half's spec and requires 4 only for a half that asks for a key directory; halves that do not ask install with the helper they used before. `keysDir` is in the approval digest only when `true`, so every existing digest is unchanged. An update that adds it is never auto-approved (`agent-half.keys-dir`). The approval preview, the CLI and the Plugins page show the directory, and retained-data records and purge confirmations name it. [App Host](packages/core/docs/04-api-reference/app-host.md#key-directory) says what to back up: `apps/`, never `app-keys/`, never both together. A whole-disk copy still holds both; only key wrapping closes that.
+
+Tests: core and serverd `agent-half-contract.test.js` (the path, protocol 4, the spec, `agentHalfOf`, the preview, the digest written out by hand with and without a key directory), `agent-half-staging.test.js` (auto-approve withheld when one is added, not when one is given up), agent CLI `lamaste-apphost.test.js` (the spec line, the unit, install, activate across versions with and without one, made again when gone, kept on remove, purged through its own trash, a failed install taking it back, no takeover without an owner record, the twin paths, the spec line the agent sends). Three-VM spec 70 (written, not yet run): a half without a key directory, an update that asks for one (withheld from auto-approve, then approved), the directory as made and as systemd applies the unit, the key kept on unhosting and found again, and deleted by a purge.
+
 ## [4.14.2] - 2026-11-17
 
 Run on rodeo 2026-11-16 on fresh VMs, the candidate on a development Feria only: three-VM 01 (55), 58 (52), 60 (41), 61 (35) passed; 59 failed 4 of 44 once (a call on a user's behalf found the consumer's channel not attached yet) and passed 44 of 44 on its rerun; 69 failed one assertion of 65 (the spec read the consumer's events while it was stopped — fixed) and passed 62 of 62 on its rerun.

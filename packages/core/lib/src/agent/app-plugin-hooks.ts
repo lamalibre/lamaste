@@ -42,6 +42,7 @@ import {
   APPHOST_ROUTE_RE,
   AgentHalfPackageNameSchema,
   AgentHalfSpecSchema,
+  agentHalfService,
   AgentHalfVersionSchema,
 } from '../agent-half.js';
 import type { AgentHalfSpec } from '../agent-half.js';
@@ -238,7 +239,9 @@ function parseAgentJob(entry: unknown): AgentJob | null {
       const base = appJobBase(e, AGENT_APP_JOB_TIMEOUTS.install);
       const spec = AgentHalfSpecSchema.safeParse(e['spec']);
       if (!base || !spec.success) return null;
-      const payload = { spec: spec.data };
+      // One form of the service (no `keysDir` unless it is `true`), as the
+      // relay signed it.
+      const payload = { spec: { ...spec.data, service: agentHalfService(spec.data.service) } };
       return signedAppJob(base, 'app-install', payload, e['signature'], (signature) => ({
         ...base,
         kind: 'app-install',

@@ -8,6 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 import {
   validateManifest,
@@ -21,7 +22,10 @@ import {
   APPHOST_PROTOCOL_VERSION,
   APPHOST_MIN_PROTOCOL_VERSION,
   APPHOST_SCOPED_PROTOCOL_VERSION,
+  APPHOST_KEYS_DIR_PROTOCOL_VERSION,
   apphostProtocolFor,
+  agentHalfHasKeysDir,
+  AgentBlockSchema,
   assertManifestPackagesTrusted,
   UntrustedScopeError,
   AGENT_HALF_INTEGRITY_RE,
@@ -257,12 +261,24 @@ test('names and paths: unit, helper and per-route directories', () => {
   assert.equal(APPHOST_PATHS.configDir('fx'), '/etc/lamalibre/apps/fx');
   assert.equal(APPHOST_PATHS.configFile('fx'), '/etc/lamalibre/apps/fx/plugin-config.json');
   assert.equal(APPHOST_PATHS.ownerFile('fx'), '/var/lib/lamalibre/apps/.owners/fx.json');
+  // A sibling tree of the data directories, never inside one.
+  assert.equal(APPHOST_PATHS.keysDir('fx'), '/var/lib/lamalibre/app-keys/fx');
+  assert.throws(() => APPHOST_PATHS.keysDir('../etc'), /Invalid plugin route/);
   assert.throws(() => APPHOST_PATHS.dataDir('../etc'), /Invalid plugin route/);
   assert.throws(() => appUnitName('fx.service'), /Invalid plugin route/);
   assert.ok(Object.isFrozen(APPHOST_PATHS));
-  assert.equal(APPHOST_PROTOCOL_VERSION, 3);
+  assert.equal(APPHOST_PROTOCOL_VERSION, 4);
   assert.equal(APPHOST_MIN_PROTOCOL_VERSION, 2);
   assert.equal(APPHOST_SCOPED_PROTOCOL_VERSION, 3);
+  assert.equal(APPHOST_KEYS_DIR_PROTOCOL_VERSION, 4);
+  // By scope; a key directory needs protocol 4 whatever the scope.
+  const half = (pkg, service = { entry: 'a.js', memoryMax: null }) => ({ package: pkg, service });
+  assert.equal(apphostProtocolFor(half('@lamalibre/fx-agent')), 2);
+  assert.equal(apphostProtocolFor(half('@other/fx-agent')), 3);
+  const withKeys = { entry: 'a.js', memoryMax: null, keysDir: true };
+  assert.equal(apphostProtocolFor(half('@lamalibre/fx-agent', withKeys)), 4);
+  assert.equal(apphostProtocolFor(half('@other/fx-agent', withKeys)), 4);
+  // A package name alone (before 4.15) still answers by its scope.
   assert.equal(apphostProtocolFor('@lamalibre/fx-agent'), 2);
   assert.equal(apphostProtocolFor('@other/fx-agent'), 3);
 });
@@ -280,6 +296,30 @@ test('spec: integrity is a sha512 SRI; the spec is checked strictly', () => {
   assert.ok(bad({ systemPackages: ['Bad Name'] }));
   assert.ok(bad({ route: 'fx' }));
   assert.ok(!bad({ version: '1.0.0-rc.1', service: { entry: 'a.js', memoryMax: null } }));
+  // A key directory is named only as `true`.
+  assert.ok(!bad({ service: { entry: 'a.js', memoryMax: null, keysDir: true } }));
+  assert.ok(bad({ service: { entry: 'a.js', memoryMax: null, keysDir: false } }));
+  assert.ok(bad({ service: { entry: 'a.js', memoryMax: null, keysDir: 'yes' } }));
+});
+
+test('agentHalfOf: a key directory only when the manifest asks for one, in one form', () => {
+  const declared = (service) =>
+    agentHalfOf({ agent: { package: '@lamalibre/fx-agent', service } }).service;
+  assert.deepEqual(declared({ entry: 'a.js' }), { entry: 'a.js', memoryMax: null });
+  assert.deepEqual(declared({ entry: 'a.js', keysDir: false }), { entry: 'a.js', memoryMax: null });
+  assert.deepEqual(declared({ entry: 'a.js', keysDir: true }), {
+    entry: 'a.js',
+    memoryMax: null,
+    keysDir: true,
+  });
+  assert.equal(agentHalfHasKeysDir({ service: declared({ entry: 'a.js' }) }), false);
+  assert.equal(agentHalfHasKeysDir({ service: declared({ entry: 'a.js', keysDir: true }) }), true);
+  // The manifest takes a boolean, nothing else.
+  const manifest = (service) =>
+    AgentBlockSchema.safeParse({ package: '@lamalibre/fx-agent', service }).success;
+  assert.ok(manifest({ entry: 'a.js', keysDir: true }));
+  assert.ok(manifest({ entry: 'a.js', keysDir: false }));
+  assert.ok(!manifest({ entry: 'a.js', keysDir: 'yes' }));
 });
 
 test('agentHalfPreview: what the approval shows', () => {
@@ -293,7 +333,10 @@ test('agentHalfPreview: what the approval shows', () => {
     serviceUser: 'lamaste-app-fx',
     unitName: 'lamalibre-app-fx.service',
     dataDir: '/var/lib/lamalibre/apps/fx',
+    keysDir: null,
   });
+  const keyed = { ...spec, service: { ...spec.service, keysDir: true } };
+  assert.equal(agentHalfPreview('fx', keyed).keysDir, '/var/lib/lamalibre/app-keys/fx');
 });
 
 // ---------------------------------------------------------------------------
@@ -322,6 +365,7 @@ test('approvalDigest: stable, and binds every field of the agent half', () => {
     { service: { entry: 'dist/agentd.js', memoryMax: null } },
     { systemPackages: ['curl'] },
     { systemPackages: ['curl', 'sqlite3', 'jq'] },
+    { service: { entry: 'dist/agentd.js', memoryMax: '512M', keysDir: true } },
   ];
   const seen = new Set([d]);
   for (const patch of changes) {
@@ -329,6 +373,41 @@ test('approvalDigest: stable, and binds every field of the agent half', () => {
     assert.ok(!seen.has(other), `a change of ${JSON.stringify(patch)} changes the digest`);
     seen.add(other);
   }
+});
+
+test('approvalDigest: a half without a key directory digests as before key directories existed', () => {
+  // The v2 document of an agent half, written out by hand in its pre-4.15
+  // form (service: entry and memoryMax only), keys sorted at every level.
+  const before = JSON.stringify({
+    agentHalf: {
+      integrity: spec.integrity,
+      package: spec.package,
+      service: { entry: spec.service.entry, memoryMax: spec.service.memoryMax },
+      systemPackages: [...spec.systemPackages].sort(),
+      version: spec.version,
+    },
+    relay: null,
+    v: 2,
+  });
+  const expected = crypto.createHash('sha256').update(before).digest('hex');
+  assert.equal(approvalDigest({ relay: null, agentHalf: spec }), expected);
+  // A key directory is bound only when asked for: `true` is in the document.
+  const keyed = { ...spec, service: { ...spec.service, keysDir: true } };
+  const withKeys = JSON.stringify({
+    agentHalf: {
+      integrity: spec.integrity,
+      package: spec.package,
+      service: { entry: spec.service.entry, keysDir: true, memoryMax: spec.service.memoryMax },
+      systemPackages: [...spec.systemPackages].sort(),
+      version: spec.version,
+    },
+    relay: null,
+    v: 2,
+  });
+  assert.equal(
+    approvalDigest({ relay: null, agentHalf: keyed }),
+    crypto.createHash('sha256').update(withKeys).digest('hex'),
+  );
 });
 
 test('approvalDigest: relay-only equals relayHookSetDigest; both parts differ from each alone', () => {

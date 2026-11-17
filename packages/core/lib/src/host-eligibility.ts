@@ -105,8 +105,9 @@ export function hostEligibility(
         );
       } else {
         // A half from a scope other than @lamalibre needs a helper that takes
-        // any trusted scope; an older one would refuse its package.
-        const needed = apphostProtocolFor(agentHalf.package);
+        // any trusted scope, and one with a key directory a helper that makes
+        // it; an older one would refuse its spec.
+        const needed = apphostProtocolFor(agentHalf);
         if (facts.apphost.version < needed) {
           reasons.push(
             `The agent's app host helper speaks protocol ${facts.apphost.version}; this plugin ` +

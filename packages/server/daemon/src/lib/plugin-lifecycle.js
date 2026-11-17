@@ -29,6 +29,7 @@ import { assertManifestTrusted, assertTrustedPackageSpec } from './trusted-scope
 import {
   AGENT_HALF_MAX_BODY_MB,
   ManifestValidationError,
+  agentHalfHasKeysDir,
   agentHalfMaxBodyMb,
   agentHalfPreview,
   derivePluginRoute,
@@ -230,7 +231,7 @@ export function autoApproveWithheld(before, after) {
  * {@link autoApproveWithheld}, each reason with its stable code (what the
  * audit entry records beside the sentence): `agent-half.added`,
  * `agent-half.package`, `agent-half.system-packages`, `agent-half.entry`,
- * `agent-half.memory-max`.
+ * `agent-half.memory-max`, `agent-half.keys-dir`.
  *
  * @returns {Array<{ code: string, message: string }>}
  */
@@ -263,6 +264,14 @@ function agentHalfWithheld(before, after) {
     reasons.push({
       code: 'agent-half.memory-max',
       message: `its service memory limit changes (${before.service.memoryMax ?? 'none'} → ${after.service.memoryMax ?? 'none'})`,
+    });
+  }
+  // A key directory is one more path the agent half may write, and needs a
+  // newer app host helper on its agent: an administrator decides on it.
+  if (agentHalfHasKeysDir(after) && !agentHalfHasKeysDir(before)) {
+    reasons.push({
+      code: 'agent-half.keys-dir',
+      message: 'it asks for a key directory on its agent (app host helper protocol 4)',
     });
   }
   return reasons;

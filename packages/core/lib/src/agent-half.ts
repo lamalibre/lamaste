@@ -123,10 +123,22 @@ export const AgentHalfVersionSchema = z
 // Declaration and spec
 // ---------------------------------------------------------------------------
 
+/**
+ * How the agent half runs. `keysDir` is present — and `true` — only when the
+ * manifest asks for a key directory: a spec without it is the spec of the
+ * same agent half before key directories existed, byte for byte, so its
+ * approval digest and the helper's spec line are unchanged.
+ */
+export interface AgentHalfService {
+  readonly entry: string;
+  readonly memoryMax: string | null;
+  readonly keysDir?: true;
+}
+
 /** The agent half as the manifest declares it, with every default applied. */
 export interface AgentHalfDeclaration {
   readonly package: string;
-  readonly service: { readonly entry: string; readonly memoryMax: string | null };
+  readonly service: AgentHalfService;
   /** `agent.requires.systemPackages`, sorted and without repeats; empty when none. */
   readonly systemPackages: readonly string[];
 }
@@ -151,6 +163,7 @@ export const AgentHalfSpecSchema = z
       .object({
         entry: AgentServiceEntrySchema,
         memoryMax: AgentServiceMemoryMaxSchema.nullable(),
+        keysDir: z.literal(true).optional(),
       })
       .strict(),
     systemPackages: z.array(SystemPackageNameSchema).max(50),
@@ -172,9 +185,34 @@ export function agentHalfOf(manifest: Pick<ParsedManifest, 'agent'>): AgentHalfD
   }
   return {
     package: agent.package,
-    service: { entry: agent.service.entry, memoryMax: agent.service.memoryMax ?? null },
+    service: agentHalfService({
+      entry: agent.service.entry,
+      memoryMax: agent.service.memoryMax ?? null,
+      keysDir: agent.service.keysDir === true,
+    }),
     systemPackages: [...new Set(agent.requires?.systemPackages ?? [])].sort(),
   };
+}
+
+/**
+ * An {@link AgentHalfService} in its one form: `keysDir: true` when asked
+ * for, otherwise no `keysDir` at all. Every place that builds or copies a
+ * service goes through it, so a spec never carries `keysDir: false` or
+ * `undefined` (which would change its digest or its helper spec line).
+ */
+export function agentHalfService(service: {
+  readonly entry: string;
+  readonly memoryMax: string | null;
+  readonly keysDir?: boolean | undefined;
+}): AgentHalfService {
+  return service.keysDir === true
+    ? { entry: service.entry, memoryMax: service.memoryMax, keysDir: true }
+    : { entry: service.entry, memoryMax: service.memoryMax };
+}
+
+/** Whether the agent half `spec` describes has a key directory. */
+export function agentHalfHasKeysDir(spec: { readonly service: AgentHalfService }): boolean {
+  return spec.service.keysDir === true;
 }
 
 /**
@@ -249,6 +287,13 @@ export const APPHOST_PATHS = Object.freeze({
   codeDir: (route: string): string => `/opt/lamalibre/apps/${appRoute(route)}`,
   /** The agent half's data (0700, owned by its account) — kept on removal unless purged. */
   dataDir: (route: string): string => `/var/lib/lamalibre/apps/${appRoute(route)}`,
+  /**
+   * The agent half's key directory (0700, owned by its account), only for a
+   * half whose manifest asks for one (`agent.service.keysDir`): a sibling
+   * tree of the data directories, so `/var/lib/lamalibre/apps` can be
+   * backed up without it. Kept on removal; deleted by a purge.
+   */
+  keysDir: (route: string): string => `/var/lib/lamalibre/app-keys/${appRoute(route)}`,
   /** The agent half's configuration directory (0750 root:<its group>). */
   configDir: (route: string): string => `/etc/lamalibre/apps/${appRoute(route)}`,
   /** The plugin config (port, installation secret) — 0600, owned by its account. */
@@ -287,8 +332,11 @@ function agentLabel(label: string): string {
  * agent halves until `sudo lamaste-agent apphost enable` installs the current one.
  * 3 (4.13): the helper takes an agent half package of any well-formed npm scope — the relay
  * signs only packages of scopes it trusts. A protocol 2 helper refuses anything but `@lamalibre/`.
+ * 4 (4.15): the helper gives an agent half that asks for one a key directory
+ * ({@link APPHOST_PATHS}`.keysDir`, `LAMASTE_APP_KEYS_DIR`). An older helper refuses a spec
+ * that names one.
  */
-export const APPHOST_PROTOCOL_VERSION = 3;
+export const APPHOST_PROTOCOL_VERSION = 4;
 
 /** The oldest helper protocol that installs an agent half from the built-in scope (`@lamalibre`). */
 export const APPHOST_MIN_PROTOCOL_VERSION = 2;
@@ -296,11 +344,30 @@ export const APPHOST_MIN_PROTOCOL_VERSION = 2;
 /** The oldest helper protocol that installs an agent half from any other trusted scope. */
 export const APPHOST_SCOPED_PROTOCOL_VERSION = 3;
 
-/** The oldest helper protocol that installs `agentHalfPackage` (by its scope). */
-export function apphostProtocolFor(agentHalfPackage: string): number {
-  return packageScope(agentHalfPackage) === BUILTIN_TRUSTED_SCOPE
-    ? APPHOST_MIN_PROTOCOL_VERSION
-    : APPHOST_SCOPED_PROTOCOL_VERSION;
+/** The oldest helper protocol that gives an agent half a key directory. */
+export const APPHOST_KEYS_DIR_PROTOCOL_VERSION = 4;
+
+/**
+ * The oldest helper protocol that installs the agent half `spec` describes:
+ * by its package's scope, and {@link APPHOST_KEYS_DIR_PROTOCOL_VERSION} when
+ * it has a key directory. Halves that ask for nothing new install with the
+ * helper they installed with before.
+ *
+ * A package name alone (the form before 4.15) answers by its scope only —
+ * a name says nothing about a key directory; pass the spec wherever there
+ * is one.
+ */
+export function apphostProtocolFor(
+  spec: string | { readonly package: string; readonly service: AgentHalfService },
+): number {
+  const pkg = typeof spec === 'string' ? spec : spec.package;
+  const byScope =
+    packageScope(pkg) === BUILTIN_TRUSTED_SCOPE
+      ? APPHOST_MIN_PROTOCOL_VERSION
+      : APPHOST_SCOPED_PROTOCOL_VERSION;
+  return typeof spec !== 'string' && agentHalfHasKeysDir(spec)
+    ? Math.max(byScope, APPHOST_KEYS_DIR_PROTOCOL_VERSION)
+    : byScope;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +387,8 @@ export interface AgentHalfPreview {
   readonly unitName: string;
   /** Its data directory on the agent ({@link APPHOST_PATHS}`.dataDir`) — kept on removal unless purged. */
   readonly dataDir: string;
+  /** Its key directory ({@link APPHOST_PATHS}`.keysDir`) when it asks for one, else null. */
+  readonly keysDir: string | null;
 }
 
 /** The approval preview of plugin `route`'s agent half. */
@@ -334,5 +403,6 @@ export function agentHalfPreview(route: string, spec: AgentHalfSpec): AgentHalfP
     serviceUser: appServiceUser(route),
     unitName: appUnitName(route),
     dataDir: APPHOST_PATHS.dataDir(route),
+    keysDir: agentHalfHasKeysDir(spec) ? APPHOST_PATHS.keysDir(route) : null,
   };
 }

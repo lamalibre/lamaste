@@ -754,7 +754,8 @@ async function purgeDataCmd(args, { json }) {
   if (!json) {
     console.log(
       `\n  Purging what ${chalk.cyan(agentLabel)} keeps of ${chalk.cyan(name)} (route ${record.route}): ` +
-        `deleting ${record.dataDir} and the account ${record.serviceUser}`,
+        `deleting ${record.dataDir}, ${record.keysDir} (if it has one) and the account ` +
+        `${record.serviceUser}`,
     );
   }
   await finishOperation(name, result.operation, { json });
@@ -843,6 +844,12 @@ function printAgentHalf(agentHalf, title) {
   line('entry', `${agentHalf.entry}  ${d(`memory ${agentHalf.memoryMax ?? 'not limited'}`)}`);
   line('runs as', `${agentHalf.serviceUser}  ${d(`unit ${agentHalf.unitName}`)}`);
   line('data', `${agentHalf.dataDir}  ${d('(kept when it is removed, unless purged)')}`);
+  if (agentHalf.keysDir) {
+    line(
+      'keys',
+      `${agentHalf.keysDir}  ${d('(key directory; kept when it is removed, unless purged)')}`,
+    );
+  }
   line(
     'packages',
     agentHalf.systemPackages.length > 0

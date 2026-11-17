@@ -30,7 +30,7 @@ import crypto from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
-import { agentJobError, apphostProtocolFor } from '@lamalibre/lamaste';
+import { agentHalfService, agentJobError, apphostProtocolFor } from '@lamalibre/lamaste';
 import {
   APPHOST_EXIT_NOT_INSTALLED,
   agentTmpDir,
@@ -206,7 +206,7 @@ async function ownedElsewhere(deps, label, route) {
  * Why an install cannot go ahead — the helper not enabled, not answering,
  * too old, or the route owned by another agent — or null when it can.
  */
-async function helperProblem(deps, label, route, pkg) {
+async function helperProblem(deps, label, route, spec) {
   const availability = await deps.appHostStatus(route);
   if (availability.state === 'absent') return HELPER_NOT_ENABLED;
   if (availability.state === 'unusable') {
@@ -214,11 +214,12 @@ async function helperProblem(deps, label, route, pkg) {
   }
   const { status } = availability;
   // A package of a scope other than @lamalibre needs a helper that takes
-  // any scope; a @lamalibre one installs with the oldest supported helper.
-  const needed = apphostProtocolFor(pkg);
+  // any scope, and a half with a key directory a helper that makes it; any
+  // other @lamalibre one installs with the oldest supported helper.
+  const needed = apphostProtocolFor(spec);
   if (status.protocol < needed) {
     return (
-      `the app host helper speaks protocol ${status.protocol}; ${pkg} needs ` +
+      `the app host helper speaks protocol ${status.protocol}; ${spec.package} needs ` +
       `${needed} (sudo lamaste-agent apphost enable)`
     );
   }
@@ -241,7 +242,7 @@ async function installAgentHalf(label, job, deps) {
 
   const elsewhere = await ownedElsewhere(deps, label, route);
   if (elsewhere) return failure(elsewhere);
-  const problem = await helperProblem(deps, label, route, spec.package);
+  const problem = await helperProblem(deps, label, route, spec);
   if (problem) return failure(problem);
   // The service cannot start without its config, and the relay lists the
   // job only once it issued one: it arrives with the next converge.
@@ -287,7 +288,7 @@ async function installAgentHalf(label, job, deps) {
 
   const specLine = JSON.stringify({
     package: spec.package,
-    service: { entry: spec.service.entry, memoryMax: spec.service.memoryMax },
+    service: agentHalfService(spec.service),
     systemPackages: spec.systemPackages,
   });
   const installed = await deps.runAppHost(['install', label, route, spec.version, spec.integrity], {

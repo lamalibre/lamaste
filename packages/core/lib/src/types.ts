@@ -133,6 +133,8 @@ export interface RetainedAgentData {
   readonly operation: string | null;
   /** What a purge deletes on the agent: the data directory… */
   readonly dataDir: string;
+  /** …the key directory, if the agent half had one (`APPHOST_PATHS.keysDir`)… */
+  readonly keysDir: string;
   /** …and the account (user and group) the agent half ran as. */
   readonly serviceUser: string;
 }

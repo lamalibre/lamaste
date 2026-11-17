@@ -25,7 +25,7 @@
 
 import crypto from 'node:crypto';
 
-import { AgentHalfMaxBodySizeSchema, AgentHalfSpecSchema } from './agent-half.js';
+import { AgentHalfMaxBodySizeSchema, AgentHalfSpecSchema, agentHalfService } from './agent-half.js';
 import type { AgentHalfSpec } from './agent-half.js';
 import { normalizeIdentityBlock } from './identity.js';
 import type { IdentityBlockInput } from './identity.js';
@@ -228,8 +228,9 @@ export interface ApprovalSubject {
 /**
  * The digest an approval names: SHA-256 (hex) of the canonical JSON (keys
  * sorted at every level) of
- * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 }, body?: { maxBodySizeMb }, peers?: { provides, consumes } }`,
- * with the agent half's system packages sorted and without repeats,
+ * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax, keysDir? }, systemPackages } | null, identity?: { roles, attributes }, web?: { treeSha256 }, body?: { maxBodySizeMb }, peers?: { provides, consumes } }`,
+ * with the agent half's system packages sorted and without repeats, its
+ * `service.keysDir` (`true`) only when it asks for a key directory,
  * `identity` — the block as {@link normalizeIdentityBlock} returns it —
  * only when the plugin declares one, `web` only when it declares a web
  * surface, `body` only when it declares a request body limit and `peers`
@@ -261,7 +262,7 @@ export function approvalDigest(subject: ApprovalSubject): string {
       package: spec.package,
       version: spec.version,
       integrity: spec.integrity,
-      service: { entry: spec.service.entry, memoryMax: spec.service.memoryMax },
+      service: agentHalfService(spec.service),
       systemPackages: [...new Set(spec.systemPackages)].sort(),
     };
   }
