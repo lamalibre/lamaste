@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Desktop native clients.** A native client now has a kind: `mobile` (4.14's, claimed HTTPS redirects on the application host and app association files) or `desktop`, for desktop apps (Windows, macOS, Linux). A desktop client registers 1–4 loopback paths, rendered as the redirect URIs `http://127.0.0.1<path>` with no port: the app binds a listener on `127.0.0.1` on any free port, signs the person in through the system browser with PKCE `S256`, and receives the code there (RFC 8252 §7.3; Authelia 4.39.28 compares a loopback redirect without its port and refuses `localhost`, `[::1]` and `https` loopback, verified in Docker). It has the same token broker, grants, rotation, reuse detection, standing checks, revocation per device and sign-in events as a mobile client, and the agent half receives the same `user` caller. A desktop client writes no association files and adds no location to the host. A host holds at most one client of each kind (migration `0025` rebuilds `native_clients` with `kind` and `loopback_paths_json`; every existing client becomes `mobile`). `POST /api/native-apps` takes `kind` (`mobile` when absent), the kind cannot change; the panel's Native Apps page, `lamaste-server native-apps create --kind desktop --loopback-path <p>`, the audit and Gatekeeper's projection carry the kind. Design: `packages/core/docs/desktop-native-clients-design.md`; reference: [Native Apps](packages/core/docs/04-api-reference/native-apps.md).
+
+Tests: three-VM spec 71 (written, not yet run): a desktop client on a plugin's site, the code on the app's loopback listener with its state, the exchange (another port: `invalid_grant`), the agent half's caller, rotation, reuse and revocation from the panel, a mobile client beside it on the same host, and redirects the client does not hold (another path, `localhost`, `[::1]`, the host) refused at authorization.
+
 ## [4.14.2] - 2026-11-17
 
 Run on rodeo 2026-11-16 on fresh VMs, the candidate on a development Feria only: three-VM 01 (55), 58 (52), 60 (41), 61 (35) passed; 59 failed 4 of 44 once (a call on a user's behalf found the consumer's channel not attached yet) and passed 44 of 44 on its rerun; 69 failed one assertion of 65 (the spec read the consumer's events while it was stopped — fixed) and passed 62 of 62 on its rerun.
