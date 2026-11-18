@@ -1,12 +1,15 @@
 /**
- * Native (mobile) apps on the user surface — the rules every side shares
- * (packages/core/docs/native-apps-design.md).
+ * Native apps on the user surface — the rules every side shares
+ * (packages/core/docs/native-apps-design.md; desktop clients:
+ * packages/core/docs/desktop-native-clients-design.md).
  *
  * An administrator registers one **native client** for an application host
  * (a user-surface host: a plugin-owned site, or a tunnel bound to plugin
  * routes). Lamaste renders it into Authelia as a public OIDC client —
- * PKCE `S256`, authorization code + refresh token, claimed HTTPS redirect
- * URIs on the host, the host's audience — and stands in front of Authelia's
+ * PKCE `S256`, authorization code + refresh token, the host's audience, and
+ * redirect URIs by its kind: a **mobile** client's are claimed HTTPS paths on
+ * the host, a **desktop** client's are loopback paths on the device
+ * (`http://127.0.0.1<path>`, any port) — and stands in front of Authelia's
  * token endpoint for it (the token broker). A native app then calls every
  * plugin the host serves with one bearer access token, checked as a browser
  * session is.
@@ -79,6 +82,9 @@ export const NATIVE_LIFETIME_DAYS = Object.freeze({
 /** How many redirect paths one native client may claim. */
 export const NATIVE_REDIRECT_PATHS_MAX = 4;
 
+/** How many loopback paths one desktop client may register. */
+export const NATIVE_LOOPBACK_PATHS_MAX = 4;
+
 /** The longest redirect path. */
 export const NATIVE_REDIRECT_PATH_MAX_LENGTH = 128;
 
@@ -114,6 +120,19 @@ export const NATIVE_REFRESH_GRACE_MS = 30_000;
 const REDIRECT_PATH_RE = /^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/;
 
 /**
+ * Whether `path` may be a desktop client's loopback path: one or more
+ * segments of `[A-Za-z0-9._~-]`, no `.` or `..` segment, at most
+ * {@link NATIVE_REDIRECT_PATH_MAX_LENGTH}, no query or fragment — the
+ * redirect-path rule without the host exclusions, since the path is on the
+ * device, not on the application host.
+ */
+export function isNativeLoopbackPath(path: unknown): path is string {
+  if (typeof path !== 'string' || path.length > NATIVE_REDIRECT_PATH_MAX_LENGTH) return false;
+  if (!REDIRECT_PATH_RE.test(path)) return false;
+  return !path.split('/').some((segment) => segment === '.' || segment === '..');
+}
+
+/**
  * The path prefixes a redirect path may not lie under: the API, the
  * association files, and the vhosts' own internal locations (an exact
  * location there would collide with one the renderers write, and nginx
@@ -130,9 +149,7 @@ const REDIRECT_PATH_FORBIDDEN_PREFIXES = Object.freeze(['/api', '/.well-known', 
  * (D6) — in place of whatever its backend or shell would answer there.
  */
 export function isNativeRedirectPath(path: unknown): path is string {
-  if (typeof path !== 'string' || path.length > NATIVE_REDIRECT_PATH_MAX_LENGTH) return false;
-  if (!REDIRECT_PATH_RE.test(path)) return false;
-  if (path.split('/').some((segment) => segment === '.' || segment === '..')) return false;
+  if (!isNativeLoopbackPath(path)) return false;
   const lower = path.toLowerCase();
   return !REDIRECT_PATH_FORBIDDEN_PREFIXES.some(
     (prefix) => lower === prefix || lower.startsWith(`${prefix}/`),
@@ -144,11 +161,31 @@ export function nativeAudience(fqdn: string): string {
   return `https://${fqdn.toLowerCase()}`;
 }
 
-/** The redirect URIs a native client is registered with: `https://<fqdn><path>`. */
+/** The redirect URIs a mobile client is registered with: `https://<fqdn><path>`. */
 export function nativeRedirectUris(fqdn: string, paths: readonly string[]): string[] {
   return paths.map((path) => {
     if (!isNativeRedirectPath(path)) throw new Error('Invalid native redirect path');
     return `${nativeAudience(fqdn)}${path}`;
+  });
+}
+
+/**
+ * The loopback interface a desktop client's redirect URIs name: the IPv4
+ * literal, never `localhost` (it may resolve elsewhere) — and Authelia
+ * matches neither `localhost` nor `[::1]` against it (verified 2026-11-17).
+ */
+export const NATIVE_LOOPBACK_HOST = '127.0.0.1';
+
+/**
+ * The redirect URIs a desktop client is registered with:
+ * `http://127.0.0.1<path>`, with no port. Authelia compares a loopback IP
+ * literal's redirect without its port (RFC 8252 §7.3), so the app listens
+ * on any free port; the path is compared exactly.
+ */
+export function nativeLoopbackRedirectUris(paths: readonly string[]): string[] {
+  return paths.map((path) => {
+    if (!isNativeLoopbackPath(path)) throw new Error('Invalid native loopback path');
+    return `http://${NATIVE_LOOPBACK_HOST}${path}`;
   });
 }
 
@@ -288,11 +325,31 @@ export const NATIVE_CLIENT_HOST_KINDS = Object.freeze(['site', 'tunnel'] as cons
 
 export type NativeClientHostKind = (typeof NATIVE_CLIENT_HOST_KINDS)[number];
 
+/**
+ * The kinds of native client: `mobile` — claimed HTTPS redirect paths on the
+ * host and its app association files; `desktop` — loopback redirects on the
+ * device, no files on the host. A host has at most one client of each kind.
+ */
+export const NATIVE_CLIENT_KINDS = Object.freeze(['mobile', 'desktop'] as const);
+
+export type NativeClientKind = (typeof NATIVE_CLIENT_KINDS)[number];
+
+/** Whether `value` is a kind of native client. */
+export function isNativeClientKind(value: unknown): value is NativeClientKind {
+  return typeof value === 'string' && (NATIVE_CLIENT_KINDS as readonly string[]).includes(value);
+}
+
 const RedirectPathsSchema = z
   .array(z.string().refine(isNativeRedirectPath, { message: 'Not a valid redirect path' }))
   .min(1)
   .max(NATIVE_REDIRECT_PATHS_MAX)
   .refine(unique, { message: 'redirectPaths must not repeat' });
+
+const LoopbackPathsSchema = z
+  .array(z.string().refine(isNativeLoopbackPath, { message: 'Not a valid loopback path' }))
+  .min(1)
+  .max(NATIVE_LOOPBACK_PATHS_MAX)
+  .refine(unique, { message: 'loopbackPaths must not repeat' });
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
@@ -318,44 +375,86 @@ const LifetimeDaysSchema = z
   .min(NATIVE_LIFETIME_DAYS.min)
   .max(NATIVE_LIFETIME_DAYS.max);
 
-/**
- * A new native client: its slug (the id is `lamaste-native-<slug>`), the
- * application host it belongs to, the name its consent screen shows, its
- * redirect paths on the host, the lifetimes (defaults 15 minutes, 30 days
- * idle, 90 days absolute; idle never longer than absolute) and, optionally,
- * the app association setting.
- */
-export const NativeClientCreateSchema = z
+/** What every new native client names, whatever its kind. */
+const CREATE_COMMON = {
+  slug: z.string().regex(NATIVE_CLIENT_SLUG_RE, 'Not a valid client slug'),
+  hostKind: z.enum(NATIVE_CLIENT_HOST_KINDS),
+  hostId: z.string().min(1).max(128),
+  name: ClientNameSchema,
+  accessTokenMinutes: AccessMinutesSchema.default(NATIVE_ACCESS_TOKEN_MINUTES.default),
+  idleDays: LifetimeDaysSchema.default(NATIVE_LIFETIME_DAYS.idleDefault),
+  absoluteDays: LifetimeDaysSchema.default(NATIVE_LIFETIME_DAYS.absoluteDefault),
+  enabled: z.boolean().default(true),
+};
+
+const MobileClientCreateSchema = z
   .object({
-    slug: z.string().regex(NATIVE_CLIENT_SLUG_RE, 'Not a valid client slug'),
-    hostKind: z.enum(NATIVE_CLIENT_HOST_KINDS),
-    hostId: z.string().min(1).max(128),
-    name: ClientNameSchema,
+    kind: z.literal('mobile'),
+    ...CREATE_COMMON,
     redirectPaths: RedirectPathsSchema,
-    accessTokenMinutes: AccessMinutesSchema.default(NATIVE_ACCESS_TOKEN_MINUTES.default),
-    idleDays: LifetimeDaysSchema.default(NATIVE_LIFETIME_DAYS.idleDefault),
-    absoluteDays: LifetimeDaysSchema.default(NATIVE_LIFETIME_DAYS.absoluteDefault),
     associations: NativeAssociationsSchema.default({}),
-    enabled: z.boolean().default(true),
   })
-  .strict()
-  .refine((client) => client.idleDays <= client.absoluteDays, {
-    message: 'idleDays must not exceed absoluteDays',
-    path: ['idleDays'],
-  });
+  .strict();
 
-export type NativeClientCreateInput = z.input<typeof NativeClientCreateSchema>;
-export type NativeClientCreate = z.output<typeof NativeClientCreateSchema>;
+const DesktopClientCreateSchema = z
+  .object({
+    kind: z.literal('desktop'),
+    ...CREATE_COMMON,
+    loopbackPaths: LoopbackPathsSchema,
+  })
+  .strict();
 
 /**
- * A change to a native client: any of its settings but its id and host.
+ * A new native client: its kind (`mobile` when absent — a 4.14 body is a
+ * mobile client), its slug (the id is `lamaste-native-<slug>`), the
+ * application host it belongs to, the name its consent screen shows, the
+ * lifetimes (defaults 15 minutes, 30 days idle, 90 days absolute; idle
+ * never longer than absolute), and by kind: a mobile client's redirect
+ * paths on the host and, optionally, its app association setting; a
+ * desktop client's loopback paths (no redirect paths, no associations —
+ * refused as unknown keys).
+ */
+export const NativeClientCreateSchema = z.preprocess(
+  (value) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value) && !('kind' in value)
+      ? { ...value, kind: 'mobile' }
+      : value,
+  z
+    .discriminatedUnion('kind', [MobileClientCreateSchema, DesktopClientCreateSchema])
+    .refine((client) => client.idleDays <= client.absoluteDays, {
+      message: 'idleDays must not exceed absoluteDays',
+      path: ['idleDays'],
+    }),
+);
+
+/** A new mobile client as written; `kind` may be left out. */
+export type NativeMobileClientCreateInput = Omit<
+  z.input<typeof MobileClientCreateSchema>,
+  'kind'
+> & { readonly kind?: 'mobile' };
+
+/** A new desktop client as written. */
+export type NativeDesktopClientCreateInput = z.input<typeof DesktopClientCreateSchema>;
+
+export type NativeClientCreateInput =
+  | NativeMobileClientCreateInput
+  | NativeDesktopClientCreateInput;
+export type NativeClientCreate =
+  | z.output<typeof MobileClientCreateSchema>
+  | z.output<typeof DesktopClientCreateSchema>;
+
+/**
+ * A change to a native client: any of its settings but its id, host and
+ * kind (`kind` is refused as an unknown key — delete and create instead).
  * Whether idle stays within absolute is checked against the merged record
- * ({@link nativeClientLifetimesValid}).
+ * ({@link nativeClientLifetimesValid}); whether the change fits the
+ * client's kind, with {@link nativeClientUpdateKindError}.
  */
 export const NativeClientUpdateSchema = z
   .object({
     name: ClientNameSchema.optional(),
     redirectPaths: RedirectPathsSchema.optional(),
+    loopbackPaths: LoopbackPathsSchema.optional(),
     accessTokenMinutes: AccessMinutesSchema.optional(),
     idleDays: LifetimeDaysSchema.optional(),
     absoluteDays: LifetimeDaysSchema.optional(),
@@ -367,6 +466,26 @@ export const NativeClientUpdateSchema = z
 
 export type NativeClientUpdateInput = z.input<typeof NativeClientUpdateSchema>;
 export type NativeClientUpdate = z.output<typeof NativeClientUpdateSchema>;
+
+/** The settings only one kind of client has, by kind. */
+const KIND_ONLY_SETTINGS: Readonly<Record<NativeClientKind, readonly string[]>> = Object.freeze({
+  mobile: ['redirectPaths', 'associations'],
+  desktop: ['loopbackPaths'],
+});
+
+/**
+ * Why `change` does not fit a client of `kind`, or null when it does: a
+ * mobile client takes no loopback paths, a desktop client no redirect
+ * paths and no app association setting.
+ */
+export function nativeClientUpdateKindError(
+  kind: NativeClientKind,
+  change: Readonly<Record<string, unknown>>,
+): string | null {
+  const other: NativeClientKind = kind === 'mobile' ? 'desktop' : 'mobile';
+  const misplaced = KIND_ONLY_SETTINGS[other].filter((key) => change[key] !== undefined);
+  return misplaced.length === 0 ? null : `A ${kind} client has no ${misplaced.join(' or ')}`;
+}
 
 /** Whether a client's lifetimes hold together: idle never longer than absolute. */
 export function nativeClientLifetimesValid(client: {
@@ -454,6 +573,8 @@ export const NATIVE_APPS_PROJECTION_FILE = 'native-apps.json';
 /** One served native client as the projection lists it. */
 export interface NativeAppsProjectionClient {
   readonly clientId: string;
+  /** Its kind (`mobile` when a projection written before kinds names none). */
+  readonly kind: NativeClientKind;
   /** The application host's name, lower case. */
   readonly fqdn: string;
   /** The relay domain the host is under (its issuer is `https://auth.<domain>`). */
@@ -465,10 +586,11 @@ const PROJECTION_HOST_RE =
 
 /**
  * The projection, read defensively: `{ v: 1, clients: [...] }` with every
- * entry a native client id, a host under its domain, `enabled: true`; null
- * for anything else — a missing or malformed projection refuses every
- * bearer token. A host or client id listed twice is left out (two answers
- * to "whose host is this" mean no one's).
+ * entry a native client id, a kind (`mobile` when absent), a host under its
+ * domain, `enabled: true`; null for anything else — a missing or malformed
+ * projection refuses every bearer token. A host has at most one client of
+ * each kind: a host listed twice for one kind, or a client id listed twice,
+ * is left out (two answers to "whose client is this" mean no one's).
  */
 export function parseNativeAppsProjection(parsed: unknown): NativeAppsProjectionClient[] | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
@@ -479,26 +601,38 @@ export function parseNativeAppsProjection(parsed: unknown): NativeAppsProjection
     if (!entry || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
     const { clientId, fqdn, domain, enabled } = e;
-    if (enabled !== true || !isNativeClientId(clientId)) continue;
+    const kind = e['kind'] ?? 'mobile';
+    if (enabled !== true || !isNativeClientId(clientId) || !isNativeClientKind(kind)) continue;
     if (typeof fqdn !== 'string' || typeof domain !== 'string') continue;
     const host = fqdn.toLowerCase();
     const base = domain.toLowerCase();
     if (!PROJECTION_HOST_RE.test(host) || !PROJECTION_HOST_RE.test(base)) continue;
     if (!host.endsWith(`.${base}`)) continue;
-    out.push({ clientId, fqdn: host, domain: base });
+    out.push({ clientId, kind, fqdn: host, domain: base });
   }
-  const count = (key: (c: NativeAppsProjectionClient) => string, value: string): number =>
-    out.filter((c) => key(c) === value).length;
+  const count = (match: (c: NativeAppsProjectionClient) => boolean): number =>
+    out.filter(match).length;
   return out.filter(
-    (c) => count((x) => x.fqdn, c.fqdn) === 1 && count((x) => x.clientId, c.clientId) === 1,
+    (c) =>
+      count((x) => x.fqdn === c.fqdn && x.kind === c.kind) === 1 &&
+      count((x) => x.clientId === c.clientId) === 1,
   );
 }
 
-/** The served native client of the host `fqdn` (any case), or null. */
+/** The served native clients of the host `fqdn` (any case) — at most one of each kind. */
+export function nativeClientsOfHost(
+  clients: readonly NativeAppsProjectionClient[],
+  fqdn: string,
+): NativeAppsProjectionClient[] {
+  const name = fqdn.toLowerCase();
+  return clients.filter((c) => c.fqdn === name);
+}
+
+/** The served native client of `kind` (default `mobile`) of the host `fqdn` (any case), or null. */
 export function nativeClientOfHost(
   clients: readonly NativeAppsProjectionClient[],
   fqdn: string,
+  kind: NativeClientKind = 'mobile',
 ): NativeAppsProjectionClient | null {
-  const name = fqdn.toLowerCase();
-  return clients.find((c) => c.fqdn === name) ?? null;
+  return nativeClientsOfHost(clients, fqdn).find((c) => c.kind === kind) ?? null;
 }

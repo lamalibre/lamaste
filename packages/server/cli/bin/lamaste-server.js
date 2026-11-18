@@ -18,7 +18,7 @@
  *   users         Users and the user directory: disable, delete, erase
  *   invitations   Invitations, both kinds: list, revoke, disable invitees
  *   domains       The relay's base domains, their members and their brands
- *   native-apps   Native (mobile) apps' clients per application host and their grants
+ *   native-apps   Native (mobile and desktop) apps' clients per application host and their grants
  *   mail          How the relay sends mail: Gmail API or SMTP, sender, budget
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
@@ -72,7 +72,7 @@ ${b('COMMANDS')}
   ${c('users')}           Users and the user directory (list, disable, enable, delete, erase, directory)
   ${c('invitations')}     Invitations, the administrator's and delegated (list, revoke, disable-invitees)
   ${c('domains')}         The relay's base domains (list, add, verify-dns, activate, remove, members, branding, mail)
-  ${c('native-apps')}     Native (mobile) apps: one client per application host, its grants per device
+  ${c('native-apps')}     Native apps: a mobile and a desktop client per application host, grants per device
   ${c('mail')}            How the relay sends mail (show, set-smtp, google, sender, limit, test, resume, clear)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle, bind a plugin's user surface)
   ${c('sites')}           Manage static sites (list, create, delete)

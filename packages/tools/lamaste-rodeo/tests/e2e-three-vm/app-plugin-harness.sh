@@ -505,6 +505,7 @@ const unit = `lamalibre-app-${route}.service`;
 const socketUnit = `lamalibre-app-${route}.socket`;
 const codeDir = `/opt/lamalibre/apps/${route}`;
 const dataDir = `/var/lib/lamalibre/apps/${route}`;
+const keysDir = `/var/lib/lamalibre/app-keys/${route}`;
 const configDir = `/etc/lamalibre/apps/${route}`;
 const agentDir = `/root/.lamalibre/lamaste/agents/${label}`;
 
@@ -667,6 +668,47 @@ process.stdout.write(
     data: {
       dir: statOf(dataDir),
       state: state ? { instance: state.instance, starts: state.starts, versions: state.versions } : null,
+    },
+    // The key directory (protocol 4): the directory, its files with their
+    // modes and owners (never their content), and the key tree's trash.
+    keys: {
+      tree: statOf('/var/lib/lamalibre/app-keys'),
+      dir: statOf(keysDir),
+      files: (() => {
+        try {
+          return Object.fromEntries(fs.readdirSync(keysDir).sort().map((n) => [n, statOf(path.join(keysDir, n))]));
+        } catch {
+          return null;
+        }
+      })(),
+      trash: statOf('/var/lib/lamalibre/app-keys/.trash'),
+      trashEntries: (() => {
+        try {
+          return fs.readdirSync('/var/lib/lamalibre/app-keys/.trash').length;
+        } catch {
+          return null;
+        }
+      })(),
+      inDataTree: (() => {
+        // Whether a key file of this route is anywhere under the data tree.
+        const found = [];
+        const walkFor = (dir) => {
+          let names = [];
+          try {
+            names = fs.readdirSync(dir);
+          } catch {
+            return;
+          }
+          for (const name of names) {
+            const p = path.join(dir, name);
+            const s = fs.lstatSync(p);
+            if (s.isDirectory()) walkFor(p);
+            else if (name === 'link-key.json') found.push(p);
+          }
+        };
+        walkFor('/var/lib/lamalibre/apps');
+        return found;
+      })(),
     },
     config: {
       dir: statOf(configDir),

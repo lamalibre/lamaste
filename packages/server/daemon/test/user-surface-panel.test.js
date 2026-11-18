@@ -1175,6 +1175,67 @@ test('a native app’s bearer token: the half gets the same user caller, never t
   }
 });
 
+test('a desktop client’s bearer token beside the mobile client’s: the same user caller to the half', async () => {
+  const db = await lib.getStateDb();
+  const ayse = await lib.findDirectoryUser('ayse');
+  const now = Date.now();
+  const DESKTOP_CLIENT = 'lamaste-native-desk';
+  const insert = db.prepare(
+    `INSERT INTO native_clients (client_id, kind, host_kind, host_id, name, redirect_paths_json,
+       loopback_paths_json, access_token_minutes, idle_days, absolute_days, created_at, updated_at)
+     VALUES (?, ?, 'tunnel', ?, ?, ?, ?, 15, 30, 90, ?, ?)`,
+  );
+  insert.run(NATIVE_CLIENT, 'mobile', piyasa.id, 'Mobile', '["/oauth/callback"]', '[]', now, now);
+  insert.run(DESKTOP_CLIENT, 'desktop', piyasa.id, 'Desk', '[]', '["/callback"]', now, now);
+  const grants = [];
+  const tokenOf = (clientId) => {
+    const grantId = crypto.randomUUID();
+    grants.push(grantId);
+    db.prepare(
+      `INSERT INTO native_grants (grant_id, client_id, user_id, created_at, last_used_at, absolute_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(grantId, clientId, ayse.userId, now, now, now + 90 * 86_400_000);
+    const token = nativeToken({ client_id: clientId });
+    db.prepare(
+      'INSERT INTO native_access_tokens (token_sha256, grant_id, expires_at) VALUES (?, ?, ?)',
+    ).run(crypto.createHash('sha256').update(token).digest('hex'), grantId, now + 900_000);
+    return token;
+  };
+  const mobileToken = tokenOf(NATIVE_CLIENT);
+  const desktopToken = tokenOf(DESKTOP_CLIENT);
+  nativeClients = [
+    { clientId: NATIVE_CLIENT, kind: 'mobile', fqdn: HOST, domain: 'relay.test' },
+    { clientId: DESKTOP_CLIENT, kind: 'desktop', fqdn: HOST, domain: 'relay.test' },
+  ];
+  try {
+    const callers = [];
+    for (const token of [mobileToken, desktopToken]) {
+      const res = await viaNginxBearer('GET', '/api/ux/app/me', token);
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(res.json().authorization, null, 'the bearer token stays with the relay');
+      callers.push(res.json().caller);
+    }
+    // The agent half cannot tell the two apps apart: the same signed caller.
+    assert.deepEqual(callers[1], callers[0]);
+    assert.equal(callers[1].userId, ayse.userId);
+
+    // A token of a client the projection does not list for the host is refused.
+    nativeClients = [{ clientId: NATIVE_CLIENT, kind: 'mobile', fqdn: HOST, domain: 'relay.test' }];
+    const unlisted = await viaNginxBearer('GET', '/api/ux/app/me', desktopToken);
+    assert.equal(unlisted.statusCode, 401);
+  } finally {
+    nativeClients = null;
+    for (const grantId of grants) {
+      db.prepare('DELETE FROM native_access_tokens WHERE grant_id = ?').run(grantId);
+      db.prepare('DELETE FROM native_grants WHERE grant_id = ?').run(grantId);
+    }
+    db.prepare('DELETE FROM native_clients WHERE client_id IN (?, ?)').run(
+      NATIVE_CLIENT,
+      DESKTOP_CLIENT,
+    );
+  }
+});
+
 test('a live bearer token on a host not served for now is a 503, kept; another host’s client’s is a 401 (security review L5)', async () => {
   const db = await lib.getStateDb();
   const ayse = await lib.findDirectoryUser('ayse');

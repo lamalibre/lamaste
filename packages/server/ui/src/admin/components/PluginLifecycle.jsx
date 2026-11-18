@@ -374,6 +374,16 @@ export function AgentHalfView({ agentHalf }) {
         <span className="font-mono text-zinc-300">{agentHalf.dataDir}</span>
         <span className="text-zinc-600"> — kept when it is removed, unless purged</span>
       </div>
+      {agentHalf.keysDir ? (
+        <div>
+          <span className="text-zinc-500">keys </span>
+          <span className="font-mono text-zinc-300">{agentHalf.keysDir}</span>
+          <span className="text-zinc-600">
+            {' '}
+            — a key directory apart from its data; kept when it is removed, unless purged
+          </span>
+        </div>
+      ) : null}
       <div>
         <span className="text-zinc-500">system packages </span>
         {agentHalf.systemPackages.length > 0 ? (

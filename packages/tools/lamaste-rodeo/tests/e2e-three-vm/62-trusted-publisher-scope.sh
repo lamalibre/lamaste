@@ -227,7 +227,7 @@ host_api_post "plugins/${PLUGIN}/enable" '{}' > /dev/null
 log_section "Hosted through the app host helper (protocol 3)"
 
 ensure_app_host_helper
-assert_json_field "$(agent_host_facts)" '.apphost.version' '3' "Host facts: the helper speaks protocol 3 (any trusted scope)" || true
+assert_json_field "$(agent_host_facts)" '.apphost.version >= 3' 'true' "Host facts: the helper speaks protocol 3 or later (any trusted scope)" || true
 ELIGIBILITY=$(host_api_get "plugins/${PLUGIN}/hosting/eligibility" | jq -c ".agents[]? | select(.label == \"${HOST_AGENT_LABEL}\")" 2>/dev/null || echo '{}')
 assert_json_field "$ELIGIBILITY" '"\(.eligible) \(.reasons | length)"' 'true 0' "Eligibility: ${HOST_AGENT_LABEL} can host it" || true
 

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Monitor,
   Pencil,
   Plus,
   Power,
@@ -21,11 +22,27 @@ import {
   associationFileUrls,
   associationsFromForm,
   associationsToForm,
+  loopbackRedirectPreview,
   nativeClientIdOf,
+  nativeClientKindOf,
   nativeClientStatusText,
   nativeHostChoices,
   splitList,
 } from '../lib/native-apps.js';
+
+/** What each kind of client is, in the create dialog and on a card. */
+const KINDS = {
+  mobile: {
+    label: 'Mobile',
+    icon: Smartphone,
+    text: 'iOS and Android apps: HTTPS redirect paths on the host, claimed by the app',
+  },
+  desktop: {
+    label: 'Desktop',
+    icon: Monitor,
+    text: 'Windows, macOS and Linux apps: the sign-in returns to http://127.0.0.1 on any port of the device',
+  },
+};
 
 const BUTTON =
   'inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-600 hover:text-white disabled:opacity-50';
@@ -61,11 +78,36 @@ function NumberField({ label, value, onChange, min, max }) {
   );
 }
 
+/** A desktop client's loopback paths, with the redirect URIs they make. */
+function LoopbackFields({ form, set }) {
+  const uris = loopbackRedirectPreview(splitList(form.loopbackPaths));
+  return (
+    <label className="block">
+      <span className={LABEL}>
+        Loopback paths (1–4, e.g. /callback) — the app listens on 127.0.0.1, any port
+      </span>
+      <textarea
+        rows={2}
+        className={`${INPUT} font-mono`}
+        value={form.loopbackPaths}
+        onChange={(e) => set({ loopbackPaths: e.target.value })}
+      />
+      {uris.length > 0 && (
+        <span className="mt-1 block text-xs text-zinc-500">
+          Redirect URIs: <span className="font-mono text-zinc-300">{uris.join(', ')}</span>
+        </span>
+      )}
+    </label>
+  );
+}
+
 /**
  * The fields a client's settings share between create and edit: its name,
- * redirect paths, lifetimes and app associations.
+ * its redirects (a mobile client's paths on the host, a desktop client's
+ * loopback paths), lifetimes and — mobile only — app associations.
  */
-function SettingsFields({ form, set }) {
+function SettingsFields({ form, set, kind }) {
+  const mobile = kind === 'mobile';
   return (
     <div className="space-y-3">
       <label className="block">
@@ -76,17 +118,21 @@ function SettingsFields({ form, set }) {
           onChange={(e) => set({ name: e.target.value })}
         />
       </label>
-      <label className="block">
-        <span className={LABEL}>
-          Redirect paths on the host (1–4, e.g. /oauth/callback) — the app claims them
-        </span>
-        <textarea
-          rows={2}
-          className={`${INPUT} font-mono`}
-          value={form.redirectPaths}
-          onChange={(e) => set({ redirectPaths: e.target.value })}
-        />
-      </label>
+      {mobile ? (
+        <label className="block">
+          <span className={LABEL}>
+            Redirect paths on the host (1–4, e.g. /oauth/callback) — the app claims them
+          </span>
+          <textarea
+            rows={2}
+            className={`${INPUT} font-mono`}
+            value={form.redirectPaths}
+            onChange={(e) => set({ redirectPaths: e.target.value })}
+          />
+        </label>
+      ) : (
+        <LoopbackFields form={form} set={set} />
+      )}
       <div className="grid grid-cols-3 gap-2">
         <NumberField
           label="Access token (min)"
@@ -110,52 +156,62 @@ function SettingsFields({ form, set }) {
           onChange={(v) => set({ absoluteDays: v })}
         />
       </div>
-      <fieldset className="space-y-2 rounded-lg border border-zinc-700 p-3">
-        <legend className="px-1 text-xs text-zinc-400">iOS (apple-app-site-association)</legend>
-        <input
-          className={`${INPUT} font-mono`}
-          placeholder="Team id (10 characters)"
-          value={form.teamId}
-          onChange={(e) => set({ teamId: e.target.value })}
-        />
-        <textarea
-          rows={2}
-          className={`${INPUT} font-mono`}
-          placeholder="Bundle ids, one per line"
-          value={form.bundleIds}
-          onChange={(e) => set({ bundleIds: e.target.value })}
-        />
-      </fieldset>
-      <fieldset className="rounded-lg border border-zinc-700 p-3">
-        <legend className="px-1 text-xs text-zinc-400">Android (assetlinks.json)</legend>
-        <textarea
-          rows={3}
-          className={`${INPUT} font-mono`}
-          placeholder="One app per line: package name, then SHA-256 certificate fingerprints"
-          value={form.android}
-          onChange={(e) => set({ android: e.target.value })}
-        />
-      </fieldset>
+      {mobile && (
+        <>
+          <fieldset className="space-y-2 rounded-lg border border-zinc-700 p-3">
+            <legend className="px-1 text-xs text-zinc-400">iOS (apple-app-site-association)</legend>
+            <input
+              className={`${INPUT} font-mono`}
+              placeholder="Team id (10 characters)"
+              value={form.teamId}
+              onChange={(e) => set({ teamId: e.target.value })}
+            />
+            <textarea
+              rows={2}
+              className={`${INPUT} font-mono`}
+              placeholder="Bundle ids, one per line"
+              value={form.bundleIds}
+              onChange={(e) => set({ bundleIds: e.target.value })}
+            />
+          </fieldset>
+          <fieldset className="rounded-lg border border-zinc-700 p-3">
+            <legend className="px-1 text-xs text-zinc-400">Android (assetlinks.json)</legend>
+            <textarea
+              rows={3}
+              className={`${INPUT} font-mono`}
+              placeholder="One app per line: package name, then SHA-256 certificate fingerprints"
+              value={form.android}
+              onChange={(e) => set({ android: e.target.value })}
+            />
+          </fieldset>
+        </>
+      )}
     </div>
   );
 }
 
-/** The request body of a settings form. */
-function settingsBody(form) {
-  return {
+/** The request body of a settings form: only the settings of the client's kind. */
+function settingsBody(form, kind) {
+  const common = {
     name: form.name.trim(),
-    redirectPaths: splitList(form.redirectPaths),
     accessTokenMinutes: form.accessTokenMinutes,
     idleDays: form.idleDays,
     absoluteDays: form.absoluteDays,
-    associations: associationsFromForm(form),
   };
+  return kind === 'desktop'
+    ? { ...common, loopbackPaths: splitList(form.loopbackPaths) }
+    : {
+        ...common,
+        redirectPaths: splitList(form.redirectPaths),
+        associations: associationsFromForm(form),
+      };
 }
 
 function formOf(client) {
   return {
     name: client.name,
     redirectPaths: client.redirectPaths.join('\n'),
+    loopbackPaths: (client.loopbackPaths ?? []).join('\n'),
     accessTokenMinutes: client.accessTokenMinutes,
     idleDays: client.idleDays,
     absoluteDays: client.absoluteDays,
@@ -163,15 +219,24 @@ function formOf(client) {
   };
 }
 
-function CreateClientModal({ hosts, onClose }) {
+function CreateClientModal({ hostsFor, onClose }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [host, setHost] = useState(hosts[0] ? `${hosts[0].kind}:${hosts[0].id}` : '');
+  const [kind, setKind] = useState('mobile');
+  const hosts = hostsFor(kind);
+  const [chosenHost, setHost] = useState('');
+  // The host chosen, while it is free for this kind; else the first that is.
+  const host = hosts.some((h) => `${h.kind}:${h.id}` === chosenHost)
+    ? chosenHost
+    : hosts[0]
+      ? `${hosts[0].kind}:${hosts[0].id}`
+      : '';
   const [slug, setSlug] = useState('');
   const [form, setForm] = useState({
     name: '',
     redirectPaths: '/oauth/callback',
+    loopbackPaths: '/callback',
     accessTokenMinutes: NATIVE_ACCESS_TOKEN_MINUTES.default,
     idleDays: NATIVE_LIFETIME_DAYS.idleDefault,
     absoluteDays: NATIVE_LIFETIME_DAYS.absoluteDefault,
@@ -183,7 +248,7 @@ function CreateClientModal({ hosts, onClose }) {
   const create = useMutation({
     mutationFn: () => {
       const [hostKind, hostId] = host.split(/:(.*)/s);
-      return client.createNativeApp({ slug, hostKind, hostId, ...settingsBody(form) });
+      return client.createNativeApp({ kind, slug, hostKind, hostId, ...settingsBody(form, kind) });
     },
     onSuccess: (result) => {
       invalidateClients(queryClient);
@@ -196,10 +261,32 @@ function CreateClientModal({ hosts, onClose }) {
   return (
     <Modal onClose={onClose}>
       <h2 className="mb-4 text-lg font-bold text-white">Register a native app</h2>
+      <div className="mb-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Kind of app">
+        {Object.entries(KINDS).map(([value, k]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={kind === value}
+            onClick={() => setKind(value)}
+            className={`rounded-lg border p-3 text-left ${
+              kind === value
+                ? 'border-cyan-500 bg-zinc-800 text-white'
+                : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'
+            }`}
+          >
+            <span className="flex items-center gap-1.5 text-sm font-semibold">
+              <k.icon size={14} /> {k.label}
+            </span>
+            <span className="mt-1 block text-xs text-zinc-400">{k.text}</span>
+          </button>
+        ))}
+      </div>
       {hosts.length === 0 ? (
         <p className="text-sm text-zinc-400">
-          No application host is free: a native client belongs to a plugin-owned site or a tunnel
-          bound to plugin routes, one per host.
+          No application host is free for a {KINDS[kind].label.toLowerCase()} app: a native client
+          belongs to a plugin-owned site or a tunnel bound to plugin routes, at most one of each
+          kind per host.
         </p>
       ) : (
         <div className="space-y-3">
@@ -224,7 +311,7 @@ function CreateClientModal({ hosts, onClose }) {
               onChange={(e) => setSlug(e.target.value)}
             />
           </label>
-          <SettingsFields form={form} set={set} />
+          <SettingsFields form={form} set={set} kind={kind} />
           <DialogButtons
             confirmLabel="Register"
             disabled={!slug || !form.name.trim()}
@@ -242,10 +329,11 @@ function EditClientModal({ nativeClient, onClose }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const kind = nativeClientKindOf(nativeClient);
   const [form, setForm] = useState(() => formOf(nativeClient));
   const set = (change) => setForm((previous) => ({ ...previous, ...change }));
   const update = useMutation({
-    mutationFn: () => client.updateNativeApp(nativeClient.clientId, settingsBody(form)),
+    mutationFn: () => client.updateNativeApp(nativeClient.clientId, settingsBody(form, kind)),
     onSuccess: (result) => {
       invalidateClients(queryClient);
       toast('Native client changed');
@@ -260,7 +348,7 @@ function EditClientModal({ nativeClient, onClose }) {
         Edit <span className="font-mono">{nativeClient.clientId}</span>
       </h2>
       <div className="space-y-3">
-        <SettingsFields form={form} set={set} />
+        <SettingsFields form={form} set={set} kind={kind} />
         <DialogButtons
           confirmLabel="Save"
           disabled={!form.name.trim()}
@@ -303,12 +391,18 @@ function ClientCard({ nativeClient: c }) {
     },
   });
   const files = associationFileUrls(c);
+  const kind = KINDS[nativeClientKindOf(c)];
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-sm text-cyan-400">{c.clientId}</p>
+          <p className="flex items-center gap-2 font-mono text-sm text-cyan-400">
+            {c.clientId}
+            <span className="inline-flex items-center gap-1 rounded border border-zinc-700 px-1.5 py-0.5 font-sans text-xs text-zinc-300">
+              <kind.icon size={12} /> {kind.label}
+            </span>
+          </p>
           <p className="text-sm text-white">{c.name}</p>
           <p className="text-xs text-zinc-400">
             {c.hostKind} <span className="font-mono">{c.fqdn ?? c.hostId}</span>
@@ -392,7 +486,7 @@ function ClientCard({ nativeClient: c }) {
           title={confirm === 'delete' ? `Delete ${c.clientId}?` : `Disable ${c.clientId}?`}
           message={
             confirm === 'delete'
-              ? 'The app can no longer sign anyone in; every grant ends and the host stops serving its association files.'
+              ? `The app can no longer sign anyone in; every grant ends${files.length > 0 ? ' and the host stops serving its association files' : ''}.`
               : 'Nobody can sign in with the app until it is enabled again, and every grant ends now.'
           }
           confirmLabel={confirm === 'delete' ? 'Delete client' : 'Disable client'}
@@ -407,7 +501,7 @@ function ClientCard({ nativeClient: c }) {
 }
 
 /**
- * Native (mobile) apps: one OIDC client per application host, signing
+ * Native apps: at most one mobile and one desktop OIDC client per application host, signing
  * people in with PKCE and calling the host's plugins with bearer tokens;
  * each person's sign-in on a device is a grant that ends with their
  * standing.
@@ -419,11 +513,13 @@ export default function NativeApps() {
   const tunnels = useQuery({ queryKey: ['tunnels'], queryFn: () => client.getTunnels() });
   const sites = useQuery({ queryKey: ['sites'], queryFn: () => client.getSites() });
   const list = clients.data?.clients ?? [];
-  const hosts = nativeHostChoices({
-    tunnels: tunnels.data?.tunnels ?? [],
-    sites: sites.data?.sites ?? [],
-    clients: list,
-  });
+  const hostsFor = (clientKind) =>
+    nativeHostChoices({
+      tunnels: tunnels.data?.tunnels ?? [],
+      sites: sites.data?.sites ?? [],
+      clients: list,
+      clientKind,
+    });
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -432,8 +528,8 @@ export default function NativeApps() {
           <div>
             <h1 className="text-2xl font-bold text-white">Native apps</h1>
             <p className="text-sm text-zinc-400">
-              A mobile app signs people in through the domain’s sign-in and calls every plugin of
-              its host with one access token, checked as a browser session is.
+              A mobile or desktop app signs people in through the domain’s sign-in and calls every
+              plugin of its host with one access token, checked as a browser session is.
             </p>
           </div>
         </div>
@@ -459,7 +555,7 @@ export default function NativeApps() {
           <ClientCard key={c.clientId} nativeClient={c} />
         ))}
       </div>
-      {creating && <CreateClientModal hosts={hosts} onClose={() => setCreating(false)} />}
+      {creating && <CreateClientModal hostsFor={hostsFor} onClose={() => setCreating(false)} />}
     </div>
   );
 }

@@ -40,12 +40,19 @@ import {
   identityChangeNeedsApproval,
   identityDiff,
   isNativeClientId,
+  isNativeClientKind,
   isNativeGrantEndReason,
+  isNativeLoopbackPath,
   isNativeRedirectPath,
   isReservedOidcClientId,
   nativeAudience,
   nativeClientId,
   nativeClientLifetimesValid,
+  nativeClientOfHost,
+  nativeClientsOfHost,
+  nativeClientUpdateKindError,
+  nativeLoopbackRedirectUris,
+  parseNativeAppsProjection,
   nativeDeviceName,
   nativeRedirectUris,
   nativeTokenSha256,
@@ -169,6 +176,7 @@ test('client schema: defaults 15 min, 30 / 90 days; idle never longer than absol
     redirectPaths: ['/oauth/callback'],
   });
   assert.deepEqual(created, {
+    kind: 'mobile',
     slug: 'field',
     hostKind: 'site',
     hostId: 'abc',
@@ -203,6 +211,154 @@ test('client schema: defaults 15 min, 30 / 90 days; idle never longer than absol
   assert.equal(NativeClientUpdateSchema.safeParse({}).success, false);
   assert.equal(NativeClientUpdateSchema.safeParse({ enabled: false }).success, true);
   assert.equal(nativeClientLifetimesValid({ idleDays: 31, absoluteDays: 30 }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Desktop clients (desktop-native-clients-design.md)
+// ---------------------------------------------------------------------------
+
+test('loopback paths: the redirect-path rule without the host exclusions; URIs on 127.0.0.1, no port', () => {
+  for (const ok of ['/callback', '/oauth/callback', '/api/cb', '/.well-known/x', '/internal']) {
+    assert.equal(isNativeLoopbackPath(ok), true, ok);
+  }
+  for (const bad of ['', '/', 'cb', '/cb/', '//x', '/./x', '/x/..', '/x?y', '/x#y', 7]) {
+    assert.equal(isNativeLoopbackPath(bad), false, String(bad));
+  }
+  assert.deepEqual(nativeLoopbackRedirectUris(['/callback', '/a/b']), [
+    'http://127.0.0.1/callback',
+    'http://127.0.0.1/a/b',
+  ]);
+  assert.throws(() => nativeLoopbackRedirectUris(['/x?y']), /loopback path/);
+  assert.equal(isNativeClientKind('desktop'), true);
+  assert.equal(isNativeClientKind('mobile'), true);
+  assert.equal(isNativeClientKind('web'), false);
+});
+
+test('client schema by kind: a body without a kind is mobile; a desktop client has loopback paths only', () => {
+  const base = { slug: 'desk', hostKind: 'site', hostId: 'abc', name: 'Desk' };
+  assert.deepEqual(
+    NativeClientCreateSchema.parse({ ...base, kind: 'desktop', loopbackPaths: ['/callback'] }),
+    {
+      kind: 'desktop',
+      ...base,
+      loopbackPaths: ['/callback'],
+      accessTokenMinutes: 15,
+      idleDays: 30,
+      absoluteDays: 90,
+      enabled: true,
+    },
+  );
+  assert.equal(
+    NativeClientCreateSchema.parse({ ...base, kind: 'mobile', redirectPaths: ['/cb'] }).kind,
+    'mobile',
+  );
+  const ok = (body) => NativeClientCreateSchema.safeParse({ ...base, ...body }).success;
+  const desktop = { kind: 'desktop', loopbackPaths: ['/callback'] };
+  assert.equal(ok({ ...desktop, idleDays: 365, absoluteDays: 365 }), true);
+  assert.equal(ok({ ...desktop, idleDays: 91 }), false, 'idle never longer than absolute');
+  assert.equal(ok({ ...desktop, redirectPaths: ['/cb'] }), false, 'no redirect paths');
+  assert.equal(ok({ ...desktop, associations: {} }), false, 'no association setting');
+  assert.equal(ok({ kind: 'desktop' }), false, 'loopback paths are required');
+  assert.equal(ok({ ...desktop, loopbackPaths: [] }), false);
+  assert.equal(ok({ ...desktop, loopbackPaths: ['/a', '/a'] }), false);
+  assert.equal(ok({ ...desktop, loopbackPaths: ['/a', '/b', '/c', '/d', '/e'] }), false);
+  assert.equal(
+    ok({ redirectPaths: ['/cb'], loopbackPaths: ['/x'] }),
+    false,
+    'a mobile client has none',
+  );
+  assert.equal(ok({ kind: 'web', redirectPaths: ['/cb'] }), false);
+  assert.equal(NativeClientCreateSchema.safeParse(null).success, false);
+
+  // The kind never changes; a change fits the client's kind.
+  assert.equal(NativeClientUpdateSchema.safeParse({ kind: 'desktop' }).success, false);
+  assert.equal(NativeClientUpdateSchema.safeParse({ loopbackPaths: ['/cb'] }).success, true);
+  assert.equal(NativeClientUpdateSchema.safeParse({ loopbackPaths: ['/x?y'] }).success, false);
+  assert.equal(nativeClientUpdateKindError('desktop', { loopbackPaths: ['/cb'] }), null);
+  assert.equal(nativeClientUpdateKindError('mobile', { redirectPaths: ['/cb'] }), null);
+  assert.match(
+    nativeClientUpdateKindError('desktop', { redirectPaths: ['/cb'], associations: {} }),
+    /desktop client has no redirectPaths or associations/,
+  );
+  assert.match(
+    nativeClientUpdateKindError('mobile', { loopbackPaths: ['/cb'] }),
+    /mobile client has no loopbackPaths/,
+  );
+});
+
+test('renderNativeClient by kind: desktop on the loopback; mobile exactly as before', () => {
+  const desktop = { ...NATIVE, clientId: 'lamaste-native-desk', kind: 'desktop' };
+  delete desktop.redirectPaths;
+  desktop.loopbackPaths = ['/callback', '/oauth/done'];
+  const rendered = renderNativeClient(desktop);
+  assert.deepEqual(rendered.redirect_uris, [
+    'http://127.0.0.1/callback',
+    'http://127.0.0.1/oauth/done',
+  ]);
+  // Everything else is a mobile client's, under its own names.
+  const mobile = renderNativeClient({ ...NATIVE, clientId: 'lamaste-native-desk' });
+  assert.deepEqual({ ...rendered, redirect_uris: null }, { ...mobile, redirect_uris: null });
+  // A mobile client named so renders byte for byte as one with no kind.
+  assert.equal(
+    JSON.stringify(renderNativeClient({ ...NATIVE, kind: 'mobile' })),
+    JSON.stringify(renderNativeClient(NATIVE)),
+  );
+  for (const bad of [
+    { loopbackPaths: [] },
+    { loopbackPaths: ['/x?y'] },
+    { loopbackPaths: undefined },
+    { kind: 'web' },
+  ]) {
+    assert.throws(() => renderNativeClient({ ...desktop, ...bad }), JSON.stringify(bad));
+  }
+  assert.throws(
+    () => renderNativeClient({ ...NATIVE, redirectPaths: undefined, loopbackPaths: ['/cb'] }),
+    'a mobile client needs its redirect paths',
+  );
+});
+
+test('projection: one client of each kind per host; a kind or client listed twice is no one’s', () => {
+  const entry = (clientId, kind, fqdn = 'app.example.com') => ({
+    clientId,
+    ...(kind ? { kind } : {}),
+    fqdn,
+    domain: 'example.com',
+    enabled: true,
+  });
+  const parsed = parseNativeAppsProjection({
+    v: 1,
+    clients: [
+      entry('lamaste-native-phone', undefined),
+      entry('lamaste-native-desk', 'desktop'),
+      entry('lamaste-native-a', 'desktop', 'two.example.com'),
+      entry('lamaste-native-b', 'desktop', 'two.example.com'),
+      entry('lamaste-native-odd', 'web', 'odd.example.com'),
+    ],
+  });
+  assert.deepEqual(parsed, [
+    {
+      clientId: 'lamaste-native-phone',
+      kind: 'mobile',
+      fqdn: 'app.example.com',
+      domain: 'example.com',
+    },
+    {
+      clientId: 'lamaste-native-desk',
+      kind: 'desktop',
+      fqdn: 'app.example.com',
+      domain: 'example.com',
+    },
+  ]);
+  assert.deepEqual(
+    nativeClientsOfHost(parsed, 'APP.example.com').map((c) => c.clientId),
+    ['lamaste-native-phone', 'lamaste-native-desk'],
+  );
+  assert.equal(nativeClientOfHost(parsed, 'app.example.com')?.clientId, 'lamaste-native-phone');
+  assert.equal(
+    nativeClientOfHost(parsed, 'app.example.com', 'desktop')?.clientId,
+    'lamaste-native-desk',
+  );
+  assert.deepEqual(nativeClientsOfHost(parsed, 'two.example.com'), []);
 });
 
 test('grant words: end reasons, device names and user-agent summaries', () => {
@@ -555,6 +711,20 @@ test('verifyNativeAccessToken: every refusal names its reason', () => {
   assert.deepEqual(verify(42), { ok: false, reason: 'malformed' });
   // Skew: 30 s in the future still passes.
   assert.equal(verify(sign(claims({ iat: NOW + 30, nbf: NOW + 30, exp: NOW + 600 }))).ok, true);
+});
+
+test('verifyNativeAccessToken: the client ids of a host — a token of any of them, of no other', () => {
+  const ids = [CLIENT, 'lamaste-native-desk'];
+  assert.equal(verify(sign(claims()), { clientId: ids }).ok, true);
+  assert.equal(
+    verify(sign(claims({ client_id: 'lamaste-native-desk' })), { clientId: ids }).ok,
+    true,
+  );
+  assert.deepEqual(verify(sign(claims({ client_id: 'lamaste-native-other' })), { clientId: ids }), {
+    ok: false,
+    reason: 'wrong_client',
+  });
+  assert.deepEqual(verify(sign(claims()), { clientId: [] }), { ok: false, reason: 'wrong_client' });
 });
 
 test('bearerTokenOf: Bearer <token>, one value, nothing else', () => {

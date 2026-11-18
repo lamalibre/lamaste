@@ -442,7 +442,7 @@ test('a native client is registered on an application host, rendered into Authel
   const projection = JSON.parse(await readFile(path.join(stateDir, 'native-apps.json'), 'utf-8'));
   assert.deepEqual(projection, {
     v: 1,
-    clients: [{ clientId: CLIENT, fqdn: SITE.fqdn, domain: D, enabled: true }],
+    clients: [{ clientId: CLIENT, kind: 'mobile', fqdn: SITE.fqdn, domain: D, enabled: true }],
   });
   assert.equal((await audits('native-app.created')).length, 1);
 
@@ -494,6 +494,160 @@ test('registration refusals: no application host, a taken id, a host with a clie
     400,
     'invalid_request',
   );
+});
+
+const DESK = 'lamaste-native-desk';
+
+test('a desktop client beside the mobile one: loopback redirects, its kind projected, no files on the host', async () => {
+  const res = await call('POST', '/api/native-apps', {
+    kind: 'desktop',
+    slug: 'desk',
+    hostKind: 'site',
+    hostId: SITE.id,
+    name: 'Desk',
+    loopbackPaths: ['/callback'],
+    idleDays: 60,
+    absoluteDays: 365,
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  const { client } = res.json();
+  assert.equal(client.clientId, DESK);
+  assert.equal(client.kind, 'desktop');
+  assert.equal(client.served, true);
+  assert.equal(client.audience, `https://${SITE.fqdn}`, 'the host’s one audience');
+  assert.deepEqual(client.redirectUris, ['http://127.0.0.1/callback']);
+  assert.deepEqual(client.loopbackPaths, ['/callback']);
+  assert.deepEqual(client.redirectPaths, []);
+  assert.deepEqual(client.associations, {});
+
+  // Rendered into Authelia with its loopback URI; the mobile client as it was.
+  const rendered = Object.fromEntries(provider.options.nativeClients.map((c) => [c.clientId, c]));
+  assert.equal(rendered[DESK].kind, 'desktop');
+  assert.deepEqual(rendered[DESK].loopbackPaths, ['/callback']);
+  assert.equal(rendered[DESK].redirectPaths, undefined);
+  assert.equal(rendered[CLIENT].kind, 'mobile');
+  // Gatekeeper's projection names both clients of the host, by kind.
+  const projection = JSON.parse(await readFile(path.join(stateDir, 'native-apps.json'), 'utf-8'));
+  assert.deepEqual(
+    projection.clients
+      .filter((c) => c.fqdn === SITE.fqdn)
+      .map((c) => [c.clientId, c.kind])
+      .sort(),
+    [
+      [DESK, 'desktop'],
+      [CLIENT, 'mobile'],
+    ].sort(),
+  );
+  const [created] = (await audits('native-app.created')).filter((a) => a.details.clientId === DESK);
+  assert.equal(created.details.kind, 'desktop');
+  // The host's files are the mobile client's alone.
+  const host = await lib.nativeHostOf(SITE.fqdn);
+  assert.deepEqual(host?.redirectPaths, ['/oauth/callback']);
+
+  // One of each kind: a second desktop client is refused, naming the kind.
+  const second = await call('POST', '/api/native-apps', {
+    kind: 'desktop',
+    slug: 'desk2',
+    hostKind: 'site',
+    hostId: SITE.id,
+    name: 'Desk 2',
+    loopbackPaths: ['/callback'],
+  });
+  assert.equal(second.statusCode, 409, second.body);
+  assert.equal(second.json().code, 'host_has_client');
+  assert.match(second.json().error, /desktop/);
+  // A desktop client takes no redirect paths or associations.
+  const mixed = await call('POST', '/api/native-apps', {
+    kind: 'desktop',
+    slug: 'mixed',
+    hostKind: 'tunnel',
+    hostId: TUNNEL.id,
+    name: 'Mixed',
+    loopbackPaths: ['/callback'],
+    redirectPaths: ['/cb'],
+  });
+  assert.equal(mixed.statusCode, 400, mixed.body);
+
+  // Its kind never changes, nor does it take the other kind's settings.
+  for (const change of [{ kind: 'mobile' }, { redirectPaths: ['/cb'] }, { associations: {} }]) {
+    const refused = await call('PATCH', `/api/native-apps/${DESK}`, change);
+    assert.equal(refused.statusCode, 400, `${JSON.stringify(change)}: ${refused.body}`);
+    assert.equal(refused.json().code, 'invalid_request');
+  }
+  const mobileRefused = await call('PATCH', `/api/native-apps/${CLIENT}`, {
+    loopbackPaths: ['/callback'],
+  });
+  assert.equal(mobileRefused.statusCode, 400, mobileRefused.body);
+  const changed = await call('PATCH', `/api/native-apps/${DESK}`, {
+    loopbackPaths: ['/done', '/oauth/done'],
+  });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.deepEqual(changed.json().client.redirectUris, [
+    'http://127.0.0.1/done',
+    'http://127.0.0.1/oauth/done',
+  ]);
+  const [updated] = (await audits('native-app.updated')).filter((a) => a.details.clientId === DESK);
+  assert.equal(updated.details.kind, 'desktop');
+});
+
+test('a host whose only client is a desktop client serves no files and no redirect paths, and keeps the guard', async () => {
+  const root = path.join(dir, 'native-desktop-only');
+  const desktopOnly = {
+    clientId: DESK,
+    kind: 'desktop',
+    fqdn: 'pos.relay.test',
+    domain: D,
+    served: true,
+    redirectPaths: [],
+    loopbackPaths: ['/callback'],
+    associations: {},
+  };
+  lib.setNativeFilesDepsForTests({
+    root,
+    listNativeClients: async () => [desktopOnly],
+    pageInputsOf: async () => ({ brand: null, language: null }),
+  });
+  try {
+    assert.deepEqual(await lib.syncNativeAppFiles({ logger: quiet }), []);
+    assert.deepEqual(await readdir(root), [], 'no directory, no file for the host');
+    assert.equal(await lib.nativeHostOf('pos.relay.test'), null, 'no locations in its vhost');
+    assert.equal(await lib.nativeGuardOf('pos.relay.test'), true, 'Authorization never passed on');
+  } finally {
+    lib.setNativeFilesDepsForTests(null);
+  }
+});
+
+test('a desktop client’s sign-in, refresh and reuse go through the broker as a mobile client’s', async () => {
+  const issued = await signIn('ali', { clientId: DESK, deviceName: 'Checkout PC' });
+  assert.equal(issued.statusCode, 200, issued.body);
+  const first = issued.json();
+  const found = await lib.findRefreshToken(sha(first.refresh_token));
+  assert.equal(found.grant.clientId, DESK);
+  assert.equal(found.grant.deviceName, 'Checkout PC');
+  // Its access token is on the allow-list for its own client only.
+  assert.equal((await lib.liveAccessToken(sha(first.access_token), DESK, 'ali')).ok, true);
+  assert.deepEqual(await lib.liveAccessToken(sha(first.access_token), CLIENT, 'ali'), {
+    ok: false,
+    reason: 'wrong_client',
+  });
+
+  const rotated = (await refreshWith(first.refresh_token, DESK)).json();
+  assert.ok(rotated.refresh_token && rotated.refresh_token !== first.refresh_token);
+  const db = await lib.getStateDb();
+  db.prepare('UPDATE native_refresh_tokens SET grace_until = ? WHERE sha256 = ?').run(
+    Date.now() - 1,
+    sha(first.refresh_token),
+  );
+  const reuse = await refreshWith(first.refresh_token, DESK);
+  assert.equal(reuse.statusCode, 400);
+  assert.equal((await lib.getNativeGrant(found.grant.grantId)).revokedReason, 'reuse');
+
+  // Deleted: gone from Authelia and the projection; the mobile client stays.
+  assert.equal((await call('DELETE', `/api/native-apps/${DESK}`)).statusCode, 200);
+  assert.ok(!provider.options.nativeClients.some((c) => c.clientId === DESK));
+  const projection = JSON.parse(await readFile(path.join(stateDir, 'native-apps.json'), 'utf-8'));
+  assert.ok(!projection.clients.some((c) => c.clientId === DESK));
+  assert.ok(projection.clients.some((c) => c.clientId === CLIENT));
 });
 
 // ---------------------------------------------------------------------------
@@ -653,7 +807,11 @@ test('refresh: rotation, the grace window (R8), then reuse ends the grant (audit
   assert.equal(grant.revokedReason, 'reuse');
   assert.equal((await lib.liveAccessToken(sha(rotated.access_token), CLIENT, 'selin')).ok, false);
   assert.equal((await refreshWith(rotated.refresh_token)).statusCode, 400, 'its current token too');
-  assert.equal((await audits('native-app.grant.reuse-detected')).length, 1);
+  assert.equal(
+    (await audits('native-app.grant.reuse-detected')).filter((a) => a.details.grantId === grantId)
+      .length,
+    1,
+  );
   assert.ok((await lib.listNotifications()).notifications.some((n) => n.source === 'native-apps'));
 });
 

@@ -306,6 +306,13 @@ export {
   renderAppleAppSiteAssociation,
   renderAssetLinks,
   NATIVE_CLIENT_HOST_KINDS,
+  NATIVE_CLIENT_KINDS,
+  isNativeClientKind,
+  NATIVE_LOOPBACK_HOST,
+  NATIVE_LOOPBACK_PATHS_MAX,
+  isNativeLoopbackPath,
+  nativeLoopbackRedirectUris,
+  nativeClientUpdateKindError,
   NativeClientCreateSchema,
   NativeClientUpdateSchema,
   nativeClientLifetimesValid,
@@ -316,12 +323,16 @@ export {
   NATIVE_APPS_PROJECTION_FILE,
   parseNativeAppsProjection,
   nativeClientOfHost,
+  nativeClientsOfHost,
 } from './native-apps.js';
 export type {
   NativeAppsProjectionClient,
   NativeAssociations,
   NativeClientHostKind,
+  NativeClientKind,
   NativeClientCreateInput,
+  NativeMobileClientCreateInput,
+  NativeDesktopClientCreateInput,
   NativeClientCreate,
   NativeClientUpdateInput,
   NativeClientUpdate,
@@ -720,6 +731,7 @@ export {
   APPHOST_PROTOCOL_VERSION,
   APPHOST_MIN_PROTOCOL_VERSION,
   APPHOST_SCOPED_PROTOCOL_VERSION,
+  APPHOST_KEYS_DIR_PROTOCOL_VERSION,
   apphostProtocolFor,
   APPHOST_ROUTE_RE,
   APP_SERVICE_USER_MAX,
@@ -732,14 +744,21 @@ export {
   AgentServiceEntrySchema,
   AgentServiceMemoryMaxSchema,
   SystemPackageNameSchema,
+  agentHalfHasKeysDir,
   agentHalfMaxBodyMb,
   agentHalfOf,
+  agentHalfService,
   agentHalfPreview,
   appServiceUser,
   appUnitName,
 } from './agent-half.js';
 
-export type { AgentHalfDeclaration, AgentHalfPreview, AgentHalfSpec } from './agent-half.js';
+export type {
+  AgentHalfDeclaration,
+  AgentHalfPreview,
+  AgentHalfService,
+  AgentHalfSpec,
+} from './agent-half.js';
 
 export { hostEligibility } from './host-eligibility.js';
 export type { HostEligibility, HostEligibilityRelay } from './host-eligibility.js';

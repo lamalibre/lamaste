@@ -1,11 +1,16 @@
 /**
- * Native clients — one per application host (native-apps-design.md D2).
+ * Native clients — at most one of each kind per application host
+ * (native-apps-design.md D2; desktop-native-clients-design.md D1).
  *
  * An administrator registers a native client for a user-surface host: a
- * plugin-owned site, or a tunnel bound to plugin routes. Lamaste renders it
- * into Authelia as a public OIDC client (core `renderNativeClient`: PKCE
- * `S256`, authorization code + refresh token, the host's audience and its
- * claimed redirect URIs, the domain's two-factor policy) and tells
+ * plugin-owned site, or a tunnel bound to plugin routes. A **mobile** client
+ * redirects to paths it claims on the host (with app association files); a
+ * **desktop** client to loopback paths on the device
+ * (`http://127.0.0.1<path>`, any port), with nothing on the host. Lamaste
+ * renders it into Authelia as a public OIDC client (core
+ * `renderNativeClient`: PKCE `S256`, authorization code + refresh token, the
+ * host's audience and its redirect URIs by kind, the domain's two-factor
+ * policy) and tells
  * Gatekeeper which client belongs to which host (`native-apps.json`, the
  * projection its bearer check reads). The token broker
  * (`routes/native-oauth.js`) and the grants (`lib/native-grants.js`) do the
@@ -36,6 +41,8 @@ import {
   nativeAudience,
   nativeClientId,
   nativeClientLifetimesValid,
+  nativeClientUpdateKindError,
+  nativeLoopbackRedirectUris,
   nativeRedirectUris,
   siteUserSurfaceRoute,
   userSurfaceHosts,
@@ -63,10 +70,12 @@ const isUniqueViolation = (err) => /UNIQUE constraint failed/.test(err?.message 
 function clientOf(row) {
   return {
     clientId: row.client_id,
+    kind: row.kind,
     hostKind: row.host_kind,
     hostId: row.host_id,
     name: row.name,
     redirectPaths: JSON.parse(row.redirect_paths_json),
+    loopbackPaths: JSON.parse(row.loopback_paths_json),
     accessTokenMinutes: row.access_token_minutes,
     idleDays: row.idle_days,
     absoluteDays: row.absolute_days,
@@ -146,6 +155,16 @@ export function resolveNativeClient(client, state) {
   };
 }
 
+/**
+ * The redirect URIs a client is rendered with, by its kind: a desktop
+ * client's loopback URIs (on the device, whatever its host), a mobile
+ * client's on its host (none while the host is unresolved).
+ */
+function redirectUrisOf(resolved) {
+  if (resolved.kind === 'desktop') return nativeLoopbackRedirectUris(resolved.loopbackPaths);
+  return resolved.fqdn ? nativeRedirectUris(resolved.fqdn, resolved.redirectPaths) : [];
+}
+
 /** The API's view of a resolved client. */
 function viewOf(resolved) {
   const { host, ...rest } = resolved;
@@ -153,7 +172,7 @@ function viewOf(resolved) {
   return {
     ...rest,
     audience: resolved.fqdn ? nativeAudience(resolved.fqdn) : null,
-    redirectUris: resolved.fqdn ? nativeRedirectUris(resolved.fqdn, resolved.redirectPaths) : [],
+    redirectUris: redirectUrisOf(resolved),
     accessMode: host?.accessMode ?? null,
     routes: host ? [...host.routes] : [],
     servedRoutes: host ? [...host.served] : [],
@@ -187,18 +206,19 @@ export async function findResolvedNativeClient(clientId, state) {
 }
 
 /**
- * The native client registered for one host — any, served or not — or
- * null. State.db only, no lock: safe under the tunnel and sites locks.
+ * The native clients registered for one host — served or not, at most one
+ * of each kind. State.db only, no lock: safe under the tunnel and sites
+ * locks.
  *
  * @param {'site' | 'tunnel'} hostKind
  * @param {string} hostId
  */
-export async function nativeClientOfHost(hostKind, hostId) {
+export async function nativeClientsOfHost(hostKind, hostId) {
   const db = await getStateDb();
-  const row = db
-    .prepare('SELECT * FROM native_clients WHERE host_kind = ? AND host_id = ?')
-    .get(hostKind, hostId);
-  return row ? clientOf(row) : null;
+  return db
+    .prepare('SELECT * FROM native_clients WHERE host_kind = ? AND host_id = ? ORDER BY kind')
+    .all(hostKind, hostId)
+    .map(clientOf);
 }
 
 async function clientRowOr404(clientId) {
@@ -228,7 +248,9 @@ export async function planNativeClients(domains) {
       name: c.name,
       fqdn: c.fqdn,
       domain: c.domain,
-      redirectPaths: c.redirectPaths,
+      ...(c.kind === 'desktop'
+        ? { kind: 'desktop', loopbackPaths: c.loopbackPaths }
+        : { kind: 'mobile', redirectPaths: c.redirectPaths }),
       accessTokenMinutes: c.accessTokenMinutes,
       idleDays: c.idleDays,
     }));
@@ -236,20 +258,21 @@ export async function planNativeClients(domains) {
 
 /**
  * Write Gatekeeper's projection of the native clients (`native-apps.json`,
- * v1, 0600; only when it changed): which client belongs to which host —
- * what its bearer check admits a token of. Only served clients are listed;
- * one that is not refuses every bearer. Call it under the domain rendering
- * lock with the clients {@link planNativeClients} returned.
+ * v1, 0600; only when it changed): which clients belong to which host, with
+ * their kind — what its bearer check admits a token of. Only served clients
+ * are listed; a host without one refuses every bearer. Call it under the
+ * domain rendering lock with the clients {@link planNativeClients} returned.
  *
- * @param {ReadonlyArray<{ clientId: string, fqdn: string, domain: string }>} served
+ * @param {ReadonlyArray<{ clientId: string, kind: 'mobile' | 'desktop', fqdn: string, domain: string }>} served
  */
 export async function writeNativeAppsProjection(served) {
   await atomicWriteJSONIfChanged(
     path.join(STATE_DIR, NATIVE_APPS_PROJECTION_FILE),
     {
       v: 1,
-      clients: served.map(({ clientId, fqdn, domain }) => ({
+      clients: served.map(({ clientId, kind, fqdn, domain }) => ({
         clientId,
+        kind,
         fqdn,
         domain,
         enabled: true,
@@ -333,9 +356,11 @@ const SILENT = Object.freeze({ info() {}, warn() {}, error() {} });
 const withWarnings = (warnings) => (warnings.length > 0 ? { warnings } : {});
 
 /**
- * Register a native client (admin). Refused: 400 `invalid_request` (the
+ * Register a native client (admin): a mobile client (`kind` absent or
+ * `mobile`) or a desktop client. Refused: 400 `invalid_request` (the
  * schema), 400 `not_an_application_host` (the host is no user-surface host
- * under an active domain), 409 `client_exists`, 409 `host_has_client`.
+ * under an active domain), 409 `client_exists`, 409 `host_has_client` (the
+ * host has a client of that kind already).
  *
  * @param {unknown} input
  * @param {{ actor: string, logger?: import('pino').Logger }} opts
@@ -350,14 +375,9 @@ export async function createNativeClient(input, { actor, logger }) {
   const spec = parsed.data;
   const clientId = nativeClientId(spec.slug);
   const state = await readHostState();
+  const mobile = spec.kind === 'mobile';
   const candidate = resolveNativeClient(
-    {
-      clientId,
-      hostKind: spec.hostKind,
-      hostId: spec.hostId,
-      enabled: true,
-      redirectPaths: spec.redirectPaths,
-    },
+    { clientId, kind: spec.kind, hostKind: spec.hostKind, hostId: spec.hostId, enabled: true },
     state,
   );
   if (!candidate.served || !candidate.host) {
@@ -371,20 +391,22 @@ export async function createNativeClient(input, { actor, logger }) {
   const now = Date.now();
   try {
     db.prepare(
-      `INSERT INTO native_clients (client_id, host_kind, host_id, name, redirect_paths_json,
-         access_token_minutes, idle_days, absolute_days, associations_json, enabled,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO native_clients (client_id, kind, host_kind, host_id, name,
+         redirect_paths_json, loopback_paths_json, access_token_minutes, idle_days,
+         absolute_days, associations_json, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       clientId,
+      spec.kind,
       spec.hostKind,
       spec.hostId,
       spec.name,
-      JSON.stringify(spec.redirectPaths),
+      JSON.stringify(mobile ? spec.redirectPaths : []),
+      JSON.stringify(mobile ? [] : spec.loopbackPaths),
       spec.accessTokenMinutes,
       spec.idleDays,
       spec.absoluteDays,
-      JSON.stringify(spec.associations),
+      JSON.stringify(mobile ? spec.associations : {}),
       spec.enabled ? 1 : 0,
       now,
       now,
@@ -394,13 +416,15 @@ export async function createNativeClient(input, { actor, logger }) {
     const taken = db.prepare('SELECT 1 FROM native_clients WHERE client_id = ?').get(clientId);
     throw taken
       ? httpError('A native client with this id exists', 409, { code: 'client_exists' })
-      : httpError('This host has a native client already', 409, { code: 'host_has_client' });
+      : httpError(`This host has a ${spec.kind} native client already`, 409, {
+          code: 'host_has_client',
+        });
   }
   await recordAuditBestEffort(
     {
       actor,
       action: 'native-app.created',
-      details: { clientId, hostKind: spec.hostKind, hostId: spec.hostId },
+      details: { clientId, kind: spec.kind, hostKind: spec.hostKind, hostId: spec.hostId },
     },
     logger,
   );
@@ -409,9 +433,11 @@ export async function createNativeClient(input, { actor, logger }) {
 }
 
 /**
- * Change a native client (admin): any setting but its id and host. 400
- * `invalid_request`, 404, 409 `conflict` when it changed meanwhile.
- * Disabling it revokes every grant (`client_disabled`).
+ * Change a native client (admin): any setting but its id, host and kind —
+ * a mobile client's redirect paths and associations, a desktop client's
+ * loopback paths. 400 `invalid_request` (also a setting of the other kind),
+ * 404, 409 `conflict` when it changed meanwhile. Disabling it revokes every
+ * grant (`client_disabled`).
  *
  * @param {string} clientId
  * @param {unknown} input
@@ -426,6 +452,8 @@ export async function updateNativeClient(clientId, input, { actor, logger }) {
   }
   const change = parsed.data;
   const current = await clientRowOr404(clientId);
+  const misplaced = nativeClientUpdateKindError(current.kind, change);
+  if (misplaced) throw httpError(misplaced, 400, { code: 'invalid_request' });
   const next = { ...current, ...change };
   if (!nativeClientLifetimesValid(next)) {
     throw httpError('idleDays must not exceed absoluteDays', 400, { code: 'invalid_request' });
@@ -433,14 +461,15 @@ export async function updateNativeClient(clientId, input, { actor, logger }) {
   const db = await getStateDb();
   const result = db
     .prepare(
-      `UPDATE native_clients SET name = ?, redirect_paths_json = ?, access_token_minutes = ?,
-         idle_days = ?, absolute_days = ?, associations_json = ?, enabled = ?,
-         updated_at = ?, version = version + 1
+      `UPDATE native_clients SET name = ?, redirect_paths_json = ?, loopback_paths_json = ?,
+         access_token_minutes = ?, idle_days = ?, absolute_days = ?, associations_json = ?,
+         enabled = ?, updated_at = ?, version = version + 1
        WHERE client_id = ? AND version = ?`,
     )
     .run(
       next.name,
       JSON.stringify(next.redirectPaths),
+      JSON.stringify(next.loopbackPaths),
       next.accessTokenMinutes,
       next.idleDays,
       next.absoluteDays,
@@ -469,7 +498,12 @@ export async function updateNativeClient(clientId, input, { actor, logger }) {
     {
       actor,
       action,
-      details: { clientId, fields: Object.keys(change), ...(revoked > 0 ? { revoked } : {}) },
+      details: {
+        clientId,
+        kind: current.kind,
+        fields: Object.keys(change),
+        ...(revoked > 0 ? { revoked } : {}),
+      },
     },
     logger,
   );
@@ -496,7 +530,12 @@ export async function deleteNativeClient(clientId, { actor, logger, reason = 'cl
     {
       actor,
       action: 'native-app.deleted',
-      details: { clientId, reason, ...(revoked.length > 0 ? { revoked: revoked.length } : {}) },
+      details: {
+        clientId,
+        kind: current.kind,
+        reason,
+        ...(revoked.length > 0 ? { revoked: revoked.length } : {}),
+      },
     },
     logger,
   );
@@ -529,9 +568,9 @@ export async function reconcileNativeClientHosts(logger) {
 }
 
 /**
- * Move the native client of one host to another (a plugin's web surface
- * moved from its tunnel to its own site, same hostname): its grants stay,
- * its audience is the same. Nothing when the old host had none.
+ * Move the native clients of one host to another (a plugin's web surface
+ * moved from its tunnel to its own site, same hostname): their grants stay,
+ * their audience is the same. Nothing when the old host had none.
  *
  * @param {{ kind: 'site' | 'tunnel', id: string }} from
  * @param {{ kind: 'site' | 'tunnel', id: string }} to
@@ -539,25 +578,27 @@ export async function reconcileNativeClientHosts(logger) {
  */
 export async function moveNativeClientHost(from, to, { actor, logger }) {
   const db = await getStateDb();
-  const row = db
-    .prepare('SELECT client_id FROM native_clients WHERE host_kind = ? AND host_id = ?')
-    .get(from.kind, from.id);
-  if (!row) return { moved: false };
+  const ids = db
+    .prepare(
+      'SELECT client_id FROM native_clients WHERE host_kind = ? AND host_id = ? ORDER BY kind',
+    )
+    .all(from.kind, from.id)
+    .map((row) => row.client_id);
+  if (ids.length === 0) return { moved: false };
+  // One statement: the host's clients move together or not at all.
   db.prepare(
     `UPDATE native_clients SET host_kind = ?, host_id = ?, updated_at = ?, version = version + 1
-     WHERE client_id = ?`,
-  ).run(to.kind, to.id, Date.now(), row.client_id);
-  await recordAuditBestEffort(
-    {
-      actor,
-      action: 'native-app.host.moved',
-      details: { clientId: row.client_id, from, to },
-    },
-    logger,
-  );
+     WHERE host_kind = ? AND host_id = ?`,
+  ).run(to.kind, to.id, Date.now(), from.kind, from.id);
+  for (const clientId of ids) {
+    await recordAuditBestEffort(
+      { actor, action: 'native-app.host.moved', details: { clientId, from, to } },
+      logger,
+    );
+  }
   // Called inside the move's tunnel and sites locks: no vhost here — the
   // site's was rendered with the client already (it resolves by hostname,
   // which the tunnel and the site share).
   await syncProviders(logger);
-  return { moved: true, clientId: row.client_id };
+  return { moved: true, clientIds: ids };
 }

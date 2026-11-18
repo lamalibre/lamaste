@@ -1,0 +1,2169 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 71,
+    "name": "Native app: a desktop client",
+    "suite": "e2e-three-vm",
+    "description": "71 — Native app: a desktop client (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl", "openssl"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-nat71"
+    },
+    "SUB_W": {
+      "value": "e2e71app"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-71"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-71-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "USER_TAG": {
+      "value": "${USER_TAG: -6}",
+      "expression": true
+    },
+    "PERSON": {
+      "value": "e2e71-person-${USER_TAG}",
+      "expression": true
+    },
+    "JAR": {
+      "value": "/tmp/e2e-71-person.cookies"
+    },
+    "SLUG_DESK": {
+      "value": "e2e71desk"
+    },
+    "SLUG_MOBILE": {
+      "value": "e2e71mobile"
+    },
+    "SLUG_DESK_2": {
+      "value": "e2e71desk2"
+    },
+    "CLIENT_DESK": {
+      "value": "lamaste-native-${SLUG_DESK}",
+      "expression": true
+    },
+    "CLIENT_MOBILE": {
+      "value": "lamaste-native-${SLUG_MOBILE}",
+      "expression": true
+    },
+    "LOOPBACK_PATH": {
+      "value": "/callback"
+    },
+    "IOS_TEAM": {
+      "value": "E2ETEAM071"
+    },
+    "IOS_BUNDLE": {
+      "value": "com.example.e2edesk"
+    },
+    "LISTENER": {
+      "value": "/tmp/e2e-71-listener.py"
+    },
+    "LISTENER_PORT_FILE": {
+      "value": "/tmp/e2e-71-listener.port"
+    },
+    "LISTENER_GOT_FILE": {
+      "value": "/tmp/e2e-71-listener.got"
+    },
+    "DESK_SIGN_IN": {
+      "value": "ok"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE users/${PERSON}?erase=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${PERSON}?erase=true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM's Node.js has node:sqlite and the visitor VM has oathtool"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM needs Node.js with node:sqlite and the visitor VM oathtool"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "The visitor VM has python3 (the desktop app's loopback listener)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The visitor VM has python3 (the desktop app's loopback listener)"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "The visitor VM has no python3: the desktop app cannot listen",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The visitor VM has no python3: the desktop app cannot listen"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "DELETE /api/plugins/${PLUGIN}/web-surface",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/web-surface"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-10",
+          "label": "DELETE /api/users/${PERSON}?erase=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${PERSON}?erase=true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-11",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nFQDN=\"${SUB_W}.${DOMAIN}\"\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL}, relay domain ${DOMAIN}, site ${FQDN}\"\nif agent_has_node_sqlite && visitor_has_oathtool; then\n  log_pass \"The agent VM's Node.js has node:sqlite and the visitor VM has oathtool\"\nelse\n  log_fail \"The agent VM needs Node.js with node:sqlite and the visitor VM oathtool\"\n  end_test\n  exit $?\nfi\nif [ \"$(visitor_exec \"command -v python3 > /dev/null && echo yes || echo no\" 2>/dev/null | tail -n 1)\" = \"yes\" ]; then\n  log_pass \"The visitor VM has python3 (the desktop app's loopback listener)\"\nelse\n  log_fail \"The visitor VM has no python3: the desktop app cannot listen\"\n  end_test\n  exit $?\nfi\nnative_cleanup \"${CLIENT_DESK}\" \"${CLIENT_MOBILE}\" \"lamaste-native-${SLUG_DESK_2}\"\nhost_api_delete \"plugins/${PLUGIN}/web-surface\" > /dev/null 2>&1 || true\ndrop_plugin_grants \"${PLUGIN}\"\nhost_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\n# ===========================================================================\n# 1. The plugin's site and a desktop client\n# ==========================================================================="
+    },
+    {
+      "id": "the-plugin-s-site-and-a-desktop-client",
+      "label": "The plugin's site and a desktop client",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-71-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "User ${PERSON} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "User ${PERSON} created"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set PERSON_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.user.userId // empty'"
+          },
+          "capture": [
+            {
+              "variable": "PERSON_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Installed and approved: ${PLUGIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed and approved: ${PLUGIN}"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Its web surface created on ${FQDN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "Its web surface created on ${FQDN}"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Ready and served",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Ready and served"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -c -n --arg slug \"${SLUG_DESK}\" --arg id \"${SITE_ID}\" --arg path \"${LOOPBACK_PATH}\" '{kind: \"desktop\", slug: $slug, hostKind: \"site\", hostId: $id, name: \"E2E Desktop App\", loopbackPaths: [$path], idleDays: 60, absoluteDays: 365}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"$BODY\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "POST /api/native-apps: ${CLIENT_DESK}, kind desktop, for the site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "POST /api/native-apps: ${CLIENT_DESK}, kind desktop, for the site"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set CLIENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.client'"
+          },
+          "capture": [
+            {
+              "variable": "CLIENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "…kind desktop, served, its audience the host's origin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENT"
+              },
+              "path": "\"\\(.clientId) \\(.kind) \\(.served) \\(.audience)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${CLIENT_DESK} desktop true https://${FQDN}"
+              },
+              "message": "…kind desktop, served, its audience the host's origin"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…its redirect URI on the device's loopback, without a port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENT"
+              },
+              "path": "\"\\(.loopbackPaths | join(\",\")) \\(.redirectUris | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${LOOPBACK_PATH} http://127.0.0.1${LOOPBACK_PATH}"
+              },
+              "message": "…its redirect URI on the device's loopback, without a port"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "…no redirect path on the host, no associations",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENT"
+              },
+              "path": "\"\\(.redirectPaths | length) \\(.associations | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 0"
+              },
+              "message": "…no redirect path on the host, no associations"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "…60 days idle, 365 days absolute (an unattended device)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENT"
+              },
+              "path": "\"\\(.idleDays) \\(.absoluteDays)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "60 365"
+              },
+              "message": "…60 days idle, 365 days absolute (an unattended device)"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Audited: native-app.created, kind desktop",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_audits native-app.created \".clientId == \\\"${CLIENT_DESK}\\\" and .kind == \\\"desktop\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited: native-app.created, kind desktop"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"{\\\"kind\\\":\\\"desktop\\\",\\\"slug\\\":\\\"e2e71bad\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"Bad\\\",\\\"loopbackPaths\\\":[\\\"/cb\\\"],\\\"redirectPaths\\\":[\\\"/cb\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "A desktop client with a mobile client's redirectPaths: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A desktop client with a mobile client's redirectPaths: 400"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PATCH \"native-apps/${CLIENT_DESK}\" '{\"kind\":\"mobile\"}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "PATCH changing its kind: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH changing its kind: 400"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Authelia knows the desktop client (rendered, Authelia restarted)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia knows the desktop client (rendered, Authelia restarted)"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Authelia does not know ${CLIENT_DESK}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia does not know ${CLIENT_DESK}"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "${AUTHELIA_CONFIG_JSON}"
+          },
+          "capture": [
+            {
+              "variable": "RENDERED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Authelia's client: redirect URI http://127.0.0.1${LOOPBACK_PATH}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": ".redirect_uris | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "http://127.0.0.1${LOOPBACK_PATH}"
+              },
+              "message": "Authelia's client: redirect URI http://127.0.0.1${LOOPBACK_PATH}"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "…public, PKCE required, S256 only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": "\"\\(.public) \\(.require_pkce) \\(.pkce_challenge_method) \\(.token_endpoint_auth_method)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true true S256 none"
+              },
+              "message": "…public, PKCE required, S256 only"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…the host's audience, granted implicitly",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENDERED"
+              },
+              "path": "\"\\(.audience | join(\",\")) \\(.requested_audience_mode)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "https://${FQDN} implicit"
+              },
+              "message": "…the host's audience, granted implicitly"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "No apple-app-site-association on the host: a desktop client claims nothing there",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"https://${FQDN}/.well-known/apple-app-site-association\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "No apple-app-site-association on the host: a desktop client claims nothing there"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "…no assetlinks.json",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"https://${FQDN}/.well-known/assetlinks.json\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…no assetlinks.json"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "…and no redirect page at ${LOOPBACK_PATH} without a session",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$(visit - \"https://${FQDN}${LOOPBACK_PATH}?code=e2e71&state=e2e\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and no redirect page at ${LOOPBACK_PATH} without a session"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The plugin's site and a desktop client\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-71-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' none wide v1 \"${SUB_W}\"; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"@lamalibre/${PLUGIN}-agent\\\"]\" '[\"install\",\"uninstall\"]'\nship_listener\n\nRESP=$(users_call POST \"users\" \"{\\\"username\\\":\\\"${PERSON}\\\",\\\"displayname\\\":\\\"E2E Person\\\",\\\"email\\\":\\\"${PERSON}@example.test\\\",\\\"password\\\":\\\"${PERSON_PASSWORD}\\\",\\\"groups\\\":[]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"User ${PERSON} created\" || true\nPERSON_ID=$(json_get \"$(body_of \"$RESP\")\" '.user.userId // empty')\nINSTALL=$(install_approved \"${PLUGIN}\" \"@lamalibre/${PLUGIN}-server@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed and approved: ${PLUGIN}\" || true\nRESP=$(host_api_call POST \"plugins/${PLUGIN}/web-surface\" '{\"accessMode\":\"authenticated\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"Its web surface created on ${FQDN}\" || true\nSITE_ID=$(json_get \"$(body_of \"$RESP\")\" '.webSurface.site.id // empty')\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 120 identity_ready \"${PLUGIN}\" && wait_for 120 web_served \"${PLUGIN}\"; then\n  log_pass \"Ready and served\"\nelse\n  log_fail \"Not ready or not served: $(identity_view \"${PLUGIN}\" | jq -c '.readiness') $(web_surface \"${PLUGIN}\" | jq -c '{served, reason}')\"\nfi\n\nBODY=$(jq -c -n --arg slug \"${SLUG_DESK}\" --arg id \"${SITE_ID}\" --arg path \"${LOOPBACK_PATH}\" \\\n  '{kind: \"desktop\", slug: $slug, hostKind: \"site\", hostId: $id, name: \"E2E Desktop App\", loopbackPaths: [$path], idleDays: 60, absoluteDays: 365}')\nRESP=$(host_api_call POST \"native-apps\" \"$BODY\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"POST /api/native-apps: ${CLIENT_DESK}, kind desktop, for the site\" || true\nCLIENT=$(json_get \"$(body_of \"$RESP\")\" '.client')\nassert_json_field \"$CLIENT\" '\"\\(.clientId) \\(.kind) \\(.served) \\(.audience)\"' \"${CLIENT_DESK} desktop true https://${FQDN}\" \"…kind desktop, served, its audience the host's origin\" || true\nassert_json_field \"$CLIENT\" '\"\\(.loopbackPaths | join(\",\")) \\(.redirectUris | join(\",\"))\"' \"${LOOPBACK_PATH} http://127.0.0.1${LOOPBACK_PATH}\" \"…its redirect URI on the device's loopback, without a port\" || true\nassert_json_field \"$CLIENT\" '\"\\(.redirectPaths | length) \\(.associations | length)\"' \"0 0\" \"…no redirect path on the host, no associations\" || true\nassert_json_field \"$CLIENT\" '\"\\(.idleDays) \\(.absoluteDays)\"' \"60 365\" \"…60 days idle, 365 days absolute (an unattended device)\" || true\nassert_eq \"$(native_audits native-app.created \".clientId == \\\"${CLIENT_DESK}\\\" and .kind == \\\"desktop\\\"\")\" \"1\" \"Audited: native-app.created, kind desktop\" || true\n\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"kind\\\":\\\"desktop\\\",\\\"slug\\\":\\\"e2e71bad\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"Bad\\\",\\\"loopbackPaths\\\":[\\\"/cb\\\"],\\\"redirectPaths\\\":[\\\"/cb\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"A desktop client with a mobile client's redirectPaths: 400\" || true\n\nRESP=$(host_api_call PATCH \"native-apps/${CLIENT_DESK}\" '{\"kind\":\"mobile\"}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"PATCH changing its kind: 400\" || true\n\nif wait_for 120 native_client_known \"${CLIENT_DESK}\" \"${FQDN}\"; then\n  log_pass \"Authelia knows the desktop client (rendered, Authelia restarted)\"\nelse\n  log_fail \"Authelia does not know ${CLIENT_DESK}\"\nfi\nRENDERED=$(host_exec \"${AUTHELIA_CONFIG_JSON}\" 2>/dev/null | jq -c --arg id \"${CLIENT_DESK}\" '[.identity_providers.oidc.clients[]? | select(.client_id == $id)] | first // {}' 2>/dev/null || echo '{}')\nassert_json_field \"$RENDERED\" '.redirect_uris | join(\",\")' \"http://127.0.0.1${LOOPBACK_PATH}\" \"Authelia's client: redirect URI http://127.0.0.1${LOOPBACK_PATH}\" || true\nassert_json_field \"$RENDERED\" '\"\\(.public) \\(.require_pkce) \\(.pkce_challenge_method) \\(.token_endpoint_auth_method)\"' \"true true S256 none\" \"…public, PKCE required, S256 only\" || true\nassert_json_field \"$RENDERED\" '\"\\(.audience | join(\",\")) \\(.requested_audience_mode)\"' \"https://${FQDN} implicit\" \"…the host's audience, granted implicitly\" || true\n\nvisitor_exec \"grep -q ' ${FQDN}\\$' /etc/hosts || echo '${HOST_IP} ${FQDN}' >> /etc/hosts\" > /dev/null 2>&1 || true\nassert_not_eq \"$(visit_status \"$(visit - \"https://${FQDN}/.well-known/apple-app-site-association\")\")\" \"200\" \"No apple-app-site-association on the host: a desktop client claims nothing there\" || true\nassert_not_eq \"$(visit_status \"$(visit - \"https://${FQDN}/.well-known/assetlinks.json\")\")\" \"200\" \"…no assetlinks.json\" || true\nassert_not_eq \"$(visit_status \"$(visit - \"https://${FQDN}${LOOPBACK_PATH}?code=e2e71&state=e2e\")\")\" \"200\" \"…and no redirect page at ${LOOPBACK_PATH} without a session\" || true\n\n# ===========================================================================\n# 2. Sign-in on the device's loopback\n# ==========================================================================="
+    },
+    {
+      "id": "sign-in-the-code-on-the-app-s-loopback-listener",
+      "label": "Sign-in: the code on the app's loopback listener",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "${PERSON} entitled as viewer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${PERSON} entitled as viewer"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "…an active member of the audience",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…an active member of the audience"
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "The audience: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The audience: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set SECRET",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "reset_totp \"${PERSON}\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "${PERSON} signed in to Authelia from the visitor VM (the app's system browser)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${PERSON} signed in to Authelia from the visitor VM (the app's system browser)"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Signed in on \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DESK_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Signed in on \\"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "…the code arrived on that port, at ${LOOPBACK_PATH}, with the app's state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(url_param \"http://127.0.0.1${DESK_GOT}\" state)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "DESK_STATE"
+              },
+              "message": "…the code arrived on that port, at ${LOOPBACK_PATH}, with the app's state"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "…the registered path, the port the app chose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([[ \"${DESK_GOT}\" == \"${LOOPBACK_PATH}?\"* ]] && echo yes || echo no)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "…the registered path, the port the app chose"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "…exchanged at https://auth.${DOMAIN}/api/oidc/token: a refresh token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "RT0"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "…exchanged at https://auth.${DOMAIN}/api/oidc/token: a refresh token"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Set CLAIMS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jwt_part \"${AT0}\" 1"
+          },
+          "capture": [
+            {
+              "variable": "CLAIMS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "…a JWT access token issued to ${CLIENT_DESK}, for ${PERSON}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": "\"\\(.iss) \\(.client_id) \\(.preferred_username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN} ${CLIENT_DESK} ${PERSON}"
+              },
+              "message": "…a JWT access token issued to ${CLIENT_DESK}, for ${PERSON}"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Set GRANT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_grant_of \"${CLIENT_DESK}\" \"E2E Workstation\""
+          },
+          "capture": [
+            {
+              "variable": "GRANT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "GET /api/native-apps/${CLIENT_DESK}/grants: the grant of \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "GRANT"
+              },
+              "path": "\"\\(.userId) \\(.endedAt)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PERSON_ID} null"
+              },
+              "message": "GET /api/native-apps/${CLIENT_DESK}/grants: the grant of \\"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "listener_start"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Set STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl rand -hex 12"
+          },
+          "capture": [
+            {
+              "variable": "STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Set LOC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "desktop_authorize \"${CLIENT_DESK}\" \"http://127.0.0.1:${PORT}${LOOPBACK_PATH}\" \"${STATE}\""
+          },
+          "capture": [
+            {
+              "variable": "LOC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "Set CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "url_param \"$LOC\" code"
+          },
+          "capture": [
+            {
+              "variable": "CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "A second authorization: a code for port ${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "A second authorization: a code for port ${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Set OTHER_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(PORT == 65000 ? 64999 : 65000)"
+          },
+          "capture": [
+            {
+              "variable": "OTHER_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "…exchanged naming port ${OTHER_PORT}: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…exchanged naming port ${OTHER_PORT}: 400 invalid_grant"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Sign-in: the code on the app's loopback listener\"\n\nRESP=$(host_api_call PUT \"plugins/${PLUGIN}/entitlements\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${PERSON}\\\",\\\"roles\\\":[\\\"viewer\\\"]}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"${PERSON} entitled as viewer\" || true\nif wait_for 30 in_audience \"${PERSON_ID}\"; then\n  log_pass \"…an active member of the audience\"\nelse\n  log_fail \"The audience: $(audience_row \"${PLUGIN}\" \"${PERSON_ID}\")\"\nfi\nSECRET=$(reset_totp \"${PERSON}\")\nwait_for_next_totp_window\nassert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signed in to Authelia from the visitor VM (the app's system browser)\" || true\n\ndesktop_sign_in \"E2E Workstation\"\nassert_eq \"${DESK_SIGN_IN}\" \"ok\" \"Signed in on \\\"E2E Workstation\\\": the listener bound 127.0.0.1:${DESK_PORT}\" || true\nassert_eq \"$(url_param \"http://127.0.0.1${DESK_GOT}\" state)\" \"${DESK_STATE}\" \"…the code arrived on that port, at ${LOOPBACK_PATH}, with the app's state\" || true\nassert_eq \"$([[ \"${DESK_GOT}\" == \"${LOOPBACK_PATH}?\"* ]] && echo yes || echo no)\" \"yes\" \"…the registered path, the port the app chose\" || true\nAT0=\"${NATIVE_AT}\"\nRT0=\"${NATIVE_RT}\"\nassert_not_eq \"${RT0}\" \"\" \"…exchanged at https://auth.${DOMAIN}/api/oidc/token: a refresh token\" || true\nCLAIMS=$(jwt_part \"${AT0}\" 1)\nassert_json_field \"$CLAIMS\" '\"\\(.iss) \\(.client_id) \\(.preferred_username)\"' \"https://auth.${DOMAIN} ${CLIENT_DESK} ${PERSON}\" \"…a JWT access token issued to ${CLIENT_DESK}, for ${PERSON}\" || true\nassert_json_field \"$CLAIMS\" \"(.aud | if type == \\\"string\\\" then [.] else . end | index(\\\"https://${FQDN}\\\")) != null\" \"true\" \"…its audience the host\" || true\nGRANT=$(native_grant_of \"${CLIENT_DESK}\" \"E2E Workstation\")\nassert_json_field \"$GRANT\" '\"\\(.userId) \\(.endedAt)\"' \"${PERSON_ID} null\" \"GET /api/native-apps/${CLIENT_DESK}/grants: the grant of \\\"E2E Workstation\\\", live\" || true\n\n# The same flow, the code exchanged with another port than the one it was sent to\nPORT=$(listener_start)\nSTATE=$(openssl rand -hex 12)\npkce_pair\nLOC=$(desktop_authorize \"${CLIENT_DESK}\" \"http://127.0.0.1:${PORT}${LOOPBACK_PATH}\" \"${STATE}\")\nCODE=$(url_param \"$LOC\" code)\nassert_not_eq \"${CODE}\" \"\" \"A second authorization: a code for port ${PORT}\" || true\nOTHER_PORT=$((PORT == 65000 ? 64999 : 65000))\nnative_post /api/oidc/token \"grant_type=authorization_code\" \"code=${CODE}\" \\\n  \"redirect_uri=http://127.0.0.1:${OTHER_PORT}${LOOPBACK_PATH}\" \"client_id=${CLIENT_DESK}\" \"code_verifier=${PKCE_VERIFIER}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…exchanged naming port ${OTHER_PORT}: 400 invalid_grant\" || true\nvisitor_exec \"pkill -f '[e]2e-71-listener.py' 2>/dev/null || true\" > /dev/null 2>&1 || true\n\n# ===========================================================================\n# 3. Bearer calls\n# ==========================================================================="
+    },
+    {
+      "id": "bearer-calls-the-same-user-caller",
+      "label": "Bearer calls: the same user caller",
+      "steps": [
+        {
+          "id": "step-83",
+          "label": "Set OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo_of \"${AT0}\""
+          },
+          "capture": [
+            {
+              "variable": "OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "GET /api/${PLUGIN}/app/echo with the desktop app's bearer: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$OUT\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET /api/${PLUGIN}/app/echo with the desktop app's bearer: 200"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Set ECHO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "body_of \"$OUT\""
+          },
+          "capture": [
+            {
+              "variable": "ECHO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "…the agent half's caller: the user, the directory's id, the roles — as for a phone or a browser",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.username) \\(.caller.userId) \\(.caller.roles | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${PERSON} ${PERSON_ID} viewer"
+              },
+              "message": "…the agent half's caller: the user, the directory's id, the roles — as for a phone or a browser"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "…no Authorization, no Cookie reached it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": "\"\\(.headers.authorization) \\(.headers.cookie)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "…no Authorization, no Cookie reached it"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Bearer calls: the same user caller\"\n\nOUT=$(echo_of \"${AT0}\")\nassert_eq \"$(status_of \"$OUT\")\" \"200\" \"GET /api/${PLUGIN}/app/echo with the desktop app's bearer: 200\" || true\nECHO=$(body_of \"$OUT\")\nassert_json_field \"$ECHO\" '\"\\(.caller.type) \\(.caller.username) \\(.caller.userId) \\(.caller.roles | join(\",\"))\"' \"user ${PERSON} ${PERSON_ID} viewer\" \"…the agent half's caller: the user, the directory's id, the roles — as for a phone or a browser\" || true\nassert_json_field \"$ECHO\" '\"\\(.headers.authorization) \\(.headers.cookie)\"' \"null null\" \"…no Authorization, no Cookie reached it\" || true\n\n# ===========================================================================\n# 4. Rotation, reuse, revocation from the panel\n# ==========================================================================="
+    },
+    {
+      "id": "rotation-a-spent-token-reused-a-grant-revoked-from-the-panel",
+      "label": "Rotation, a spent token reused, a grant revoked from the panel",
+      "steps": [
+        {
+          "id": "step-89",
+          "label": "Refreshed: 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Refreshed: 200"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Set AT1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.access_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "AT1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "Set RT1",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "native_field '.refresh_token // empty'"
+          },
+          "capture": [
+            {
+              "variable": "RT1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "…a new refresh token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$([ -n \"${RT1}\" ] && [ \"${RT1}\" != \"${RT0}\" ] && echo rotated || echo same)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "rotated"
+              },
+              "message": "…a new refresh token"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "…the new access token reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(echo_of \"${AT1}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…the new access token reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Waiting out the grace window of the token just spent (30 s)...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Waiting out the grace window of the token just spent (30 s)..."
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "The spent token after its window: 400 invalid_grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "The spent token after its window: 400 invalid_grant"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "…the grant ended: reuse",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…the grant ended: reuse"
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "The grant: $(native_grant_of \"${CLIENT_DESK}\" \"E2E Workstation\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The grant: $(native_grant_of \"${CLIENT_DESK}\" \"E2E Workstation\")"
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "Its live access token is refused at once: 401 invalid_token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT1}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "Its live access token is refused at once: 401 invalid_token"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Audited once: native-app.grant.reuse-detected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_audits native-app.grant.reuse-detected \".clientId == \\\"${CLIENT_DESK}\\\" and .userId == \\\"${PERSON_ID}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audited once: native-app.grant.reuse-detected"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Signed in again on \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DESK_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Signed in again on \\"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "…its access token reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(echo_of \"${AT_TILL}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…its access token reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call DELETE \"native-apps/${CLIENT_DESK}/grants/$(grant_id_of \"${CLIENT_DESK}\" \"E2E Till\")\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "DELETE /api/native-apps/${CLIENT_DESK}/grants/<id>: one grant ended",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200 1"
+              },
+              "message": "DELETE /api/native-apps/${CLIENT_DESK}/grants/<id>: one grant ended"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "…revoked_by_admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grant_reason \"${CLIENT_DESK}\" \"E2E Till\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "revoked_by_admin"
+              },
+              "message": "…revoked_by_admin"
+            }
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "…its access token refused at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo_refused \"${AT_TILL}\" && echo refused || echo admitted)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "…its access token refused at once"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "…its refresh token refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_status) $(native_field '.error')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400 invalid_grant"
+              },
+              "message": "…its refresh token refused"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Rotation, a spent token reused, a grant revoked from the panel\"\n\nnative_refresh \"${CLIENT_DESK}\" \"${RT0}\"\nassert_eq \"$(native_status)\" \"200\" \"Refreshed: 200\" || true\nAT1=$(native_field '.access_token // empty')\nRT1=$(native_field '.refresh_token // empty')\nassert_eq \"$([ -n \"${RT1}\" ] && [ \"${RT1}\" != \"${RT0}\" ] && echo rotated || echo same)\" \"rotated\" \"…a new refresh token\" || true\nassert_eq \"$(status_of \"$(echo_of \"${AT1}\")\")\" \"200\" \"…the new access token reaches the plugin\" || true\nSPENT_AT=${SECONDS}\nlog_info \"Waiting out the grace window of the token just spent (30 s)...\"\nsleep $((32 - (SECONDS - SPENT_AT)))\nnative_refresh \"${CLIENT_DESK}\" \"${RT0}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"The spent token after its window: 400 invalid_grant\" || true\nif wait_for 15 native_grant_ended_as \"${CLIENT_DESK}\" \"E2E Workstation\" reuse; then\n  log_pass \"…the grant ended: reuse\"\nelse\n  log_fail \"The grant: $(native_grant_of \"${CLIENT_DESK}\" \"E2E Workstation\")\"\nfi\nassert_eq \"$(echo_refused \"${AT1}\" && echo refused || echo admitted)\" \"refused\" \"Its live access token is refused at once: 401 invalid_token\" || true\nassert_eq \"$(native_audits native-app.grant.reuse-detected \".clientId == \\\"${CLIENT_DESK}\\\" and .userId == \\\"${PERSON_ID}\\\"\")\" \"1\" \"Audited once: native-app.grant.reuse-detected\" || true\n\ndesktop_sign_in \"E2E Till\"\nassert_eq \"${DESK_SIGN_IN}\" \"ok\" \"Signed in again on \\\"E2E Till\\\"\" || true\nAT_TILL=\"${NATIVE_AT}\"\nRT_TILL=\"${NATIVE_RT}\"\nassert_eq \"$(status_of \"$(echo_of \"${AT_TILL}\")\")\" \"200\" \"…its access token reaches the plugin\" || true\nRESP=$(host_api_call DELETE \"native-apps/${CLIENT_DESK}/grants/$(grant_id_of \"${CLIENT_DESK}\" \"E2E Till\")\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.ended')\" \"200 1\" \"DELETE /api/native-apps/${CLIENT_DESK}/grants/<id>: one grant ended\" || true\nassert_eq \"$(native_grant_reason \"${CLIENT_DESK}\" \"E2E Till\")\" \"revoked_by_admin\" \"…revoked_by_admin\" || true\nassert_eq \"$(echo_refused \"${AT_TILL}\" && echo refused || echo admitted)\" \"refused\" \"…its access token refused at once\" || true\nnative_refresh \"${CLIENT_DESK}\" \"${RT_TILL}\"\nassert_eq \"$(native_status) $(native_field '.error')\" \"400 invalid_grant\" \"…its refresh token refused\" || true\n\n# ===========================================================================\n# 5. A mobile client beside it\n# ==========================================================================="
+    },
+    {
+      "id": "a-mobile-client-beside-the-desktop-client-on-the-same-host",
+      "label": "A mobile client beside the desktop client on the same host",
+      "steps": [
+        {
+          "id": "step-114",
+          "label": "Set BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -c -n --arg slug \"${SLUG_MOBILE}\" --arg id \"${SITE_ID}\" --arg path \"${NATIVE_REDIRECT_PATH}\" --arg team \"${IOS_TEAM}\" --arg bundle \"${IOS_BUNDLE}\" '{slug: $slug, hostKind: \"site\", hostId: $id, name: \"E2E Mobile App\", redirectPaths: [$path], associations: {ios: {teamId: $team, bundleIds: [$bundle]}}}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"$BODY\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "POST /api/native-apps: ${CLIENT_MOBILE} (no kind: mobile) on the same host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "POST /api/native-apps: ${CLIENT_MOBILE} (no kind: mobile) on the same host"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "…kind mobile, its redirect URI on the host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.client.kind) \\(.client.redirectUris | join(\",\"))\"",
+              "expected": {
+                "kind": "expr",
+                "template": "mobile https://${FQDN}${NATIVE_REDIRECT_PATH}"
+              },
+              "message": "…kind mobile, its redirect URI on the host"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"native-apps\" \"{\\\"kind\\\":\\\"desktop\\\",\\\"slug\\\":\\\"${SLUG_DESK_2}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"Second\\\",\\\"loopbackPaths\\\":[\\\"/other\\\"]}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "A second desktop client on the host: 409 host_has_client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409 host_has_client"
+              },
+              "message": "A second desktop client on the host: 409 host_has_client"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "…the refusal names the kind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$(body_of \"$RESP\")\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "desktop"
+              },
+              "message": "…the refusal names the kind"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "Authelia knows the mobile client too",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia knows the mobile client too"
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "${PERSON} signs in to Authelia again (it restarted)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "OK OK"
+              },
+              "message": "${PERSON} signs in to Authelia again (it restarted)"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "Authelia does not know ${CLIENT_MOBILE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia does not know ${CLIENT_MOBILE}"
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "visit - \"https://${FQDN}/.well-known/apple-app-site-association\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-125",
+          "label": "The mobile client's apple-app-site-association is served now",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(visit_status \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The mobile client's apple-app-site-association is served now"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "…claiming its redirect path alone — nothing of the desktop client's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(visit_body \"$RESP\")"
+              },
+              "path": "[.applinks.details[0].components[]?.\"/\"] | join(\",\")",
+              "expected": {
+                "kind": "var",
+                "name": "NATIVE_REDIRECT_PATH"
+              },
+              "message": "…claiming its redirect path alone — nothing of the desktop client's"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "A phone signs in with the mobile client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NATIVE_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "A phone signs in with the mobile client"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…its token reaches the plugin as the same user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$(echo_of \"${NATIVE_AT}\")\")"
+              },
+              "path": "\"\\(.caller.type) \\(.caller.username)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "user ${PERSON}"
+              },
+              "message": "…its token reaches the plugin as the same user"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "The desktop client still signs in beside it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DESK_SIGN_IN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "The desktop client still signs in beside it"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "…and its token reaches the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(echo_of \"${NATIVE_AT}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "…and its token reaches the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "The desktop client's live grants: \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT_DESK}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "E2E Kiosk"
+              },
+              "message": "The desktop client's live grants: \\"
+            }
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "The mobile client's: \\",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(native_grants \"${CLIENT_MOBILE}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "E2E Phone"
+              },
+              "message": "The mobile client's: \\"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A mobile client beside the desktop client on the same host\"\n\nBODY=$(jq -c -n --arg slug \"${SLUG_MOBILE}\" --arg id \"${SITE_ID}\" --arg path \"${NATIVE_REDIRECT_PATH}\" --arg team \"${IOS_TEAM}\" --arg bundle \"${IOS_BUNDLE}\" \\\n  '{slug: $slug, hostKind: \"site\", hostId: $id, name: \"E2E Mobile App\", redirectPaths: [$path], associations: {ios: {teamId: $team, bundleIds: [$bundle]}}}')\nRESP=$(host_api_call POST \"native-apps\" \"$BODY\")\nassert_eq \"$(status_of \"$RESP\")\" \"201\" \"POST /api/native-apps: ${CLIENT_MOBILE} (no kind: mobile) on the same host\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.client.kind) \\(.client.redirectUris | join(\",\"))\"' \"mobile https://${FQDN}${NATIVE_REDIRECT_PATH}\" \"…kind mobile, its redirect URI on the host\" || true\nRESP=$(host_api_call POST \"native-apps\" \"{\\\"kind\\\":\\\"desktop\\\",\\\"slug\\\":\\\"${SLUG_DESK_2}\\\",\\\"hostKind\\\":\\\"site\\\",\\\"hostId\\\":\\\"${SITE_ID}\\\",\\\"name\\\":\\\"Second\\\",\\\"loopbackPaths\\\":[\\\"/other\\\"]}\")\nassert_eq \"$(status_of \"$RESP\") $(json_get \"$(body_of \"$RESP\")\" '.code')\" \"409 host_has_client\" \"A second desktop client on the host: 409 host_has_client\" || true\nassert_contains \"$(json_get \"$(body_of \"$RESP\")\" '.error')\" \"desktop\" \"…the refusal names the kind\" || true\n\nif wait_for 120 native_client_known \"${CLIENT_MOBILE}\" \"${FQDN}\"; then\n  log_pass \"Authelia knows the mobile client too\"\n  # Adding a client restarts Authelia, whose sessions live in memory: the\n  # person signs in to Authelia again, as the app's browser shows.\n  assert_eq \"$(sign_in \"${PERSON}\" \"${PERSON_PASSWORD}\" \"${SECRET}\" \"${JAR}\" \"${FQDN}\")\" \"OK OK\" \"${PERSON} signs in to Authelia again (it restarted)\" || true\nelse\n  log_fail \"Authelia does not know ${CLIENT_MOBILE}\"\nfi\nRESP=$(visit - \"https://${FQDN}/.well-known/apple-app-site-association\")\nassert_eq \"$(visit_status \"$RESP\")\" \"200\" \"The mobile client's apple-app-site-association is served now\" || true\nassert_json_field \"$(visit_body \"$RESP\")\" '[.applinks.details[0].components[]?.\"/\"] | join(\",\")' \"${NATIVE_REDIRECT_PATH}\" \"…claiming its redirect path alone — nothing of the desktop client's\" || true\n\nnative_sign_in \"${JAR}\" \"${CLIENT_MOBILE}\" \"${FQDN}\" \"E2E Phone\"\nassert_eq \"${NATIVE_SIGN_IN}\" \"ok\" \"A phone signs in with the mobile client\" || true\nassert_json_field \"$(body_of \"$(echo_of \"${NATIVE_AT}\")\")\" '\"\\(.caller.type) \\(.caller.username)\"' \"user ${PERSON}\" \"…its token reaches the plugin as the same user\" || true\n\ndesktop_sign_in \"E2E Kiosk\"\nassert_eq \"${DESK_SIGN_IN}\" \"ok\" \"The desktop client still signs in beside it\" || true\nassert_eq \"$(status_of \"$(echo_of \"${NATIVE_AT}\")\")\" \"200\" \"…and its token reaches the plugin\" || true\nassert_eq \"$(native_grants \"${CLIENT_DESK}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')\" \"E2E Kiosk\" \"The desktop client's live grants: \\\"E2E Kiosk\\\" alone\" || true\nassert_eq \"$(native_grants \"${CLIENT_MOBILE}\" live | jq -r '[.[].deviceName] | sort | join(\",\")')\" \"E2E Phone\" \"The mobile client's: \\\"E2E Phone\\\" alone — grants are the client's\" || true\n\n# ===========================================================================\n# 6. Redirects that are not the client's\n# ==========================================================================="
+    },
+    {
+      "id": "redirects-the-client-does-not-hold-are-refused-at-authorization",
+      "label": "Redirects the client does not hold are refused at authorization",
+      "steps": [
+        {
+          "id": "step-135",
+          "label": "An unregistered loopback path: no code delivered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(refused_at_authorization \"http://127.0.0.1:${DESK_PORT:-50000}/other\" && echo refused || echo delivered)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "An unregistered loopback path: no code delivered"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "http://localhost: no code delivered (127.0.0.1 only)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(refused_at_authorization \"http://localhost:${DESK_PORT:-50000}${LOOPBACK_PATH}\" && echo refused || echo delivered)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "http://localhost: no code delivered (127.0.0.1 only)"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "http://[::1]: no code delivered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(refused_at_authorization \"http://[::1]:${DESK_PORT:-50000}${LOOPBACK_PATH}\" && echo refused || echo delivered)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "http://[::1]: no code delivered"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "The path on the host (a mobile client's form): no code delivered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(refused_at_authorization \"https://${FQDN}${LOOPBACK_PATH}\" && echo refused || echo delivered)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "refused"
+              },
+              "message": "The path on the host (a mobile client's form): no code delivered"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Redirects the client does not hold are refused at authorization\"\n\nassert_eq \"$(refused_at_authorization \"http://127.0.0.1:${DESK_PORT:-50000}/other\" && echo refused || echo delivered)\" \"refused\" \"An unregistered loopback path: no code delivered\" || true\nassert_eq \"$(refused_at_authorization \"http://localhost:${DESK_PORT:-50000}${LOOPBACK_PATH}\" && echo refused || echo delivered)\" \"refused\" \"http://localhost: no code delivered (127.0.0.1 only)\" || true\nassert_eq \"$(refused_at_authorization \"http://[::1]:${DESK_PORT:-50000}${LOOPBACK_PATH}\" && echo refused || echo delivered)\" \"refused\" \"http://[::1]: no code delivered\" || true\nassert_eq \"$(refused_at_authorization \"https://${FQDN}${LOOPBACK_PATH}\" && echo refused || echo delivered)\" \"refused\" \"The path on the host (a mobile client's form): no code delivered\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 71 — Native app: a desktop client (Three-VM)\n# ============================================================================\n# A desktop app on the user surface (desktop-native-clients-design.md),\n# played from the visitor VM: a loopback listener (python3, bound to\n# 127.0.0.1 on a free port) receives the authorization response, as a\n# desktop app does (RFC 8252 §7.3); curl is its system browser. One\n# agent-hosted plugin with identity (write_app_install_fixture … wide) owns\n# a web surface on the agent VM's agent.\n#\n# 1. A desktop client on the plugin's site: kind desktop, its redirect URI\n#    http://127.0.0.1/callback (no port), rendered so into Authelia; the\n#    host serves no association files and no redirect page for it.\n# 2. Sign-in: the code arrives on the listener's own port with the state;\n#    exchanged at the domain's token endpoint (the relay's broker) with the\n#    same redirect URI and a device name — a JWT access token for the host's\n#    audience and a refresh token; the grant is listed with its device. The\n#    same code flow exchanged with another port: invalid_grant.\n# 3. Bearer calls: the agent half receives the same `user` caller as for a\n#    phone or a browser, and no Authorization header.\n# 4. Rotation; a spent refresh token reused after its grace window ends the\n#    grant (reuse, audited, admins notified); a new sign-in revoked from the\n#    panel (DELETE …/grants/:id) ends that grant too — refresh and bearer\n#    refused at once.\n# 5. A mobile client beside it on the same host: created (one client of\n#    each kind per host), its association files served, its own sign-in\n#    works, and the desktop client keeps working; a second desktop client on\n#    the host is 409 host_has_client.\n# 6. Refused at authorization, no code delivered: an unregistered loopback\n#    path, http://localhost, and http://[::1].\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl openssl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-nat71\"\nSUB_W=\"e2e71app\"\nPOLICY_ID=\"e2e-apphost-71\"\nREMOTE_DIR=\"/var/tmp/e2e-71-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n# A username that reached an OIDC client is never given out again: per run.\nUSER_TAG=\"$(date +%s)\"\nUSER_TAG=\"${USER_TAG: -6}\"\nPERSON=\"e2e71-person-${USER_TAG}\"\n# A test credential for this run only, never printed\nPERSON_PASSWORD=\"E2e-$(openssl rand -hex 12)\"\nJAR=\"/tmp/e2e-71-person.cookies\"\nSLUG_DESK=\"e2e71desk\"\nSLUG_MOBILE=\"e2e71mobile\"\nSLUG_DESK_2=\"e2e71desk2\"\nCLIENT_DESK=\"lamaste-native-${SLUG_DESK}\"\nCLIENT_MOBILE=\"lamaste-native-${SLUG_MOBILE}\"\nLOOPBACK_PATH=\"/callback\"\nIOS_TEAM=\"E2ETEAM071\"\nIOS_BUNDLE=\"com.example.e2edesk\"\n# The listener on the visitor VM: its script, the port it bound, what it received\nLISTENER=\"/tmp/e2e-71-listener.py\"\nLISTENER_PORT_FILE=\"/tmp/e2e-71-listener.port\"\nLISTENER_GOT_FILE=\"/tmp/e2e-71-listener.got\"\nFQDN=\"\"\nSITE_ID=\"\"\nPERSON_ID=\"\"\n\n# echo_of <token> — GET /api/<plugin>/app/echo on the site with the bearer:\n# its JSON body, then the status on a line of its own\necho_of() {\n  local out\n  out=$(bearer \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\")\n  printf '%s\\n%s\\n' \"$(visit_body \"$out\")\" \"$(visit_status \"$out\")\"\n}\n# echo_refused <token> — 401 invalid_token, the relay's answer to a token no grant holds\necho_refused() {\n  local out\n  out=$(bearer \"$1\" - \"https://${FQDN}/api/${PLUGIN}/app/echo\")\n  [ \"$(visit_status \"$out\") $(visit_body \"$out\" | jq -r '.error' 2>/dev/null)\" = \"401 invalid_token\" ]\n}\n\n# in_audience <userId> — the audience holds the user as an active member\nin_audience() {\n  [ \"$(audience_row \"${PLUGIN}\" \"$1\" | jq -r '\"\\(.change.kind) \\(.change.member.status)\"' 2>/dev/null)\" = \"upsert active\" ]\n}\n\n# grant_id_of <client> <device> — the id of that device's grant (\"\" when none)\ngrant_id_of() { native_grant_of \"$1\" \"$2\" | jq -r '.grantId // empty' 2>/dev/null || true; }\n\n# ship_listener — the desktop app's loopback listener on the visitor VM: it\n# binds 127.0.0.1 on port 0 (a free port), writes the port to\n# LISTENER_PORT_FILE, answers ONE request with a small page, writes that\n# request's path and query to LISTENER_GOT_FILE (0600) and exits — after\n# 120 s without a request, too.\nship_listener() {\n  local script\n  script=$(\n    cat <<'LISTENER_EOF'\nimport os, socket, sys\nport_file, got_file = sys.argv[1], sys.argv[2]\ns = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\ns.bind((\"127.0.0.1\", 0))\ns.listen(1)\ns.settimeout(120)\nwith open(port_file + \".tmp\", \"w\") as f:\n    f.write(str(s.getsockname()[1]))\nos.replace(port_file + \".tmp\", port_file)\ntry:\n    conn, _ = s.accept()\nexcept socket.timeout:\n    sys.exit(1)\nconn.settimeout(10)\ndata = b\"\"\nwhile b\"\\r\\n\\r\\n\" not in data and len(data) < 65536:\n    chunk = conn.recv(4096)\n    if not chunk:\n        break\n    data += chunk\nline = data.split(b\"\\r\\n\", 1)[0].decode(\"latin-1\")\nparts = line.split(\" \")\ntarget = parts[1] if len(parts) >= 2 else \"\"\nfd = os.open(got_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)\nwith os.fdopen(fd, \"w\") as f:\n    f.write(target)\nbody = b\"<!doctype html><title>Signed in</title><p>You can close this window.\"\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\nContent-Length: \" + str(len(body)).encode() + b\"\\r\\nConnection: close\\r\\n\\r\\n\" + body)\nconn.close()\ns.close()\nLISTENER_EOF\n  )\n  visitor_exec \"printf %s $(printf %q \"$(printf '%s' \"$script\" | base64 | tr -d '\\n')\") | base64 -d > ${LISTENER} && chmod 0600 ${LISTENER}\" > /dev/null 2>&1 || true\n}\n\n# listener_start — start the listener (detached) and print the port it bound (\"\" when none)\nlistener_start() {\n  visitor_exec \"rm -f ${LISTENER_PORT_FILE} ${LISTENER_GOT_FILE}; pkill -f '[e]2e-71-listener.py' 2>/dev/null || true\" > /dev/null 2>&1 || true\n  visitor_exec \"nohup python3 ${LISTENER} ${LISTENER_PORT_FILE} ${LISTENER_GOT_FILE} &>/dev/null & exit\" > /dev/null 2>&1 || true\n  local _ port=\"\"\n  for _ in 1 2 3 4 5 6 7 8 9 10; do\n    port=$(visitor_exec \"cat ${LISTENER_PORT_FILE} 2>/dev/null || true\" 2>/dev/null | tr -d '\\r\\n' || true)\n    if [[ \"$port\" =~ ^[0-9]+$ ]]; then break; fi\n    port=\"\"\n    sleep 1\n  done\n  echo \"$port\"\n}\n\n# listener_got — the path and query the listener received (\"\" when none)\nlistener_got() {\n  visitor_exec \"cat ${LISTENER_GOT_FILE} 2>/dev/null || true\" 2>/dev/null | tr -d '\\r\\n' || true\n}\n\n# desktop_authorize <client> <redirect uri> <state> — the authorization\n# request with the person's session and the last pkce_pair's S256\n# challenge; consent given when Authelia asks. Prints the final Location\n# Authelia answers with (\"\" when it sends none — a refused redirect is\n# answered on the portal, never redirected to).\ndesktop_authorize() {\n  local portal=\"https://auth.${DOMAIN}\" query loc flow body redirect\n  query=\"client_id=$(uri \"$1\")&response_type=code&redirect_uri=$(uri \"$2\")&scope=$(uri \"${NATIVE_SCOPE}\")&state=$(uri \"$3\")&code_challenge=${PKCE_CHALLENGE}&code_challenge_method=S256\"\n  loc=$(native_location \"${JAR}\" \"${portal}/api/oidc/authorization?${query}\")\n  if [[ \"$loc\" == *\"/consent/openid/decision\"* ]]; then\n    flow=$(url_param \"$loc\" flow_id)\n    body=$(jq -c -n --arg f \"$flow\" --arg c \"$1\" '{flow_id: $f, client_id: $c, consent: true, pre_configured: false, claims: []}')\n    redirect=$(visitor_exec \"curl -sk --max-time 20 -b $(q \"${JAR}\") -c $(q \"${JAR}\" -X POST -H 'Content-Type: application/json' -d \"$body\" \"${portal}/api/oidc/consent\") || true\" 2>/dev/null | jq -r '.data.redirect_uri // empty' 2>/dev/null || true)\n    if [ -z \"$redirect\" ]; then\n      echo \"\"\n      return 0\n    fi\n    loc=$(native_location \"${JAR}\" \"$redirect\")\n  fi\n  echo \"$loc\"\n}\n\n# desktop_sign_in <device> — the whole desktop sign-in: the listener, the\n# authorization with redirect_uri http://127.0.0.1:<its port>/callback, the\n# browser following Authelia's redirect to the listener, the code the\n# listener received exchanged with the same redirect URI. NATIVE_AT and\n# NATIVE_RT hold the tokens; DESK_SIGN_IN says how it went (\"ok\", or what\n# failed). Never call it in a command substitution.\nDESK_SIGN_IN=\"\"\nDESK_PORT=\"\"\nDESK_STATE=\"\"\nDESK_GOT=\"\"\ndesktop_sign_in() {\n  local loc code\n  NATIVE_AT=\"\"\n  NATIVE_RT=\"\"\n  DESK_GOT=\"\"\n  DESK_PORT=$(listener_start)\n  if [ -z \"${DESK_PORT}\" ]; then\n    DESK_SIGN_IN=\"listener did not start\"\n    return 0\n  fi\n  DESK_STATE=$(openssl rand -hex 12)\n  pkce_pair\n  loc=$(desktop_authorize \"${CLIENT_DESK}\" \"http://127.0.0.1:${DESK_PORT}${LOOPBACK_PATH}\" \"${DESK_STATE}\")\n  if [[ \"$loc\" != \"http://127.0.0.1:${DESK_PORT}${LOOPBACK_PATH}?\"* ]]; then\n    DESK_SIGN_IN=\"authorize ${loc:-no-redirect}\"\n    return 0\n  fi\n  # The system browser follows the redirect to the app's listener.\n  visitor_exec \"curl -s --max-time 20 -o /dev/null $(q \"$loc\") || true\" > /dev/null 2>&1 || true\n  DESK_GOT=$(listener_got)\n  code=$(url_param \"http://127.0.0.1${DESK_GOT}\" code)\n  if [ -z \"$code\" ] || [ \"$(url_param \"http://127.0.0.1${DESK_GOT}\" state)\" != \"${DESK_STATE}\" ]; then\n    DESK_SIGN_IN=\"listener got no code with the state\"\n    return 0\n  fi\n  native_post /api/oidc/token \"grant_type=authorization_code\" \"code=${code}\" \\\n    \"redirect_uri=http://127.0.0.1:${DESK_PORT}${LOOPBACK_PATH}\" \"client_id=${CLIENT_DESK}\" \\\n    \"code_verifier=${PKCE_VERIFIER}\" \"device_name=$1\"\n  if [ \"$(native_status)\" != \"200\" ]; then\n    DESK_SIGN_IN=\"exchange $(native_status) $(native_field '.error // \"\"')\"\n    return 0\n  fi\n  NATIVE_AT=$(native_field '.access_token // empty')\n  NATIVE_RT=$(native_field '.refresh_token // empty')\n  DESK_SIGN_IN=\"ok\"\n}\n\n# refused_at_authorization <redirect uri> — Authelia sends no code there:\n# its Location is not that URI and carries no code parameter (an error on\n# the portal, whose query has error_status_code, or none)\nrefused_at_authorization() {\n  local loc\n  pkce_pair\n  loc=$(desktop_authorize \"${CLIENT_DESK}\" \"$1\" \"$(openssl rand -hex 12)\")\n  if [[ \"$loc\" == \"$1\"* ]] || [ -n \"$(url_param \"$loc\" code)\" ]; then\n    log_info \"Authorization for $1 delivered a code to ${loc%%\\?*}\" >&2\n    return 1\n  fi\n}\n\nbegin_test \"71 — Native app: a desktop client (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  native_cleanup \"${CLIENT_DESK}\" \"${CLIENT_MOBILE}\" \"lamaste-native-${SLUG_DESK_2}\"\n  drop_plugin_grants \"${PLUGIN}\"\n  timed_exec 60 multipass exec \"${VISITOR_VM}\" -- sudo bash -c \"pkill -f '[e]2e-71-listener.py' 2>/dev/null; rm -f ${JAR} ${LISTENER} ${LISTENER_PORT_FILE} ${LISTENER_GOT_FILE} /tmp/e2e-native-nobody.cookies; sed -i '/${SUB_W}\\\\./d' /etc/hosts; true\" > /dev/null 2>&1\n  host_api_delete \"users/${PERSON}?erase=true\" > /dev/null 2>&1 || true\n  nudge_sync\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

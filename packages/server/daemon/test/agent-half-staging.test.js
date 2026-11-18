@@ -153,6 +153,7 @@ test('install pins the agent half: the registry integrity, asked the way plugin 
     serviceUser: 'lamaste-app-fx',
     unitName: 'lamalibre-app-fx.service',
     dataDir: '/var/lib/lamalibre/apps/fx',
+    keysDir: null,
   });
   assert.equal(await lib.installedVersionApproved(plugin), false);
 
@@ -498,6 +499,13 @@ test('auto-approve covers a new version of the same agent half, not new system p
     lib.autoApproveWithheld(base, next({ package: '@lamalibre/fy-agent' }))[0],
     /agent package changes/,
   );
+  // A key directory asked for waits for an administrator; one given up does not.
+  const keyed = next({ service: { ...base.service, keysDir: true } });
+  assert.deepEqual(lib.autoApproveWithheld(base, keyed), [
+    'it asks for a key directory on its agent (app host helper protocol 4)',
+  ]);
+  assert.deepEqual(lib.autoApproveWithheld(keyed, next({})), []);
+  assert.deepEqual(lib.autoApproveWithheld(keyed, { ...keyed, version: '9.9.10' }), []);
 
   // Through an update: auto-approve on, a version adding a system package waits.
   await lib.setAutoApprove('fx', true, actor);

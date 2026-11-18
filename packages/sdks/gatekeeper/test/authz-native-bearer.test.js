@@ -346,6 +346,30 @@ test('a host without a served native client, or no projection, refuses every bea
   assert.equal(res.statusCode, 401);
 });
 
+test('a host with a mobile and a desktop client admits a token of either, and of no other client', async () => {
+  nativeClients = [
+    { clientId: CLIENT, kind: 'mobile', fqdn: HOST, domain: 'example.com' },
+    { clientId: 'lamaste-native-desk', kind: 'desktop', fqdn: HOST, domain: 'example.com' },
+    { clientId: 'lamaste-native-locked', kind: 'mobile', fqdn: RESTRICTED, domain: 'example.com' },
+  ];
+  for (const clientId of [CLIENT, 'lamaste-native-desk']) {
+    const res = await check('/api/notes/app/x', {
+      authorization: `Bearer ${token({ client_id: clientId })}`,
+    });
+    assert.equal(res.statusCode, 200, clientId);
+    const { caller } = verifyAsPanel(
+      res.headers['x-lamalibre-relay-assertion'],
+      'GET',
+      '/api/notes/app/x',
+    ).payload;
+    assert.equal(caller.credential.clientId, clientId);
+  }
+  const res = await check('/api/notes/app/x', {
+    authorization: `Bearer ${token({ client_id: 'lamaste-native-locked' })}`,
+  });
+  assert.equal(res.statusCode, 401, 'another host’s client');
+});
+
 test('the session path’s checks apply: membership, the restricted host’s grant', async () => {
   domains = domainsIndex([{ name: 'example.com', members: ['bob'] }]);
   let res = await check('/api/notes/app/x', { authorization: `Bearer ${token()}` });

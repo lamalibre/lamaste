@@ -1,16 +1,20 @@
 /**
- * lamaste-server native-apps — native (mobile) apps on the user surface
- * (packages/core/docs/native-apps-design.md): one OIDC client per
- * application host, signing people in with PKCE and calling every plugin of
- * the host with one bearer token; each person's sign-in on a device is a
- * grant that ends with their standing.
+ * lamaste-server native-apps — native apps on the user surface
+ * (packages/core/docs/native-apps-design.md, desktop-native-clients-design.md):
+ * OIDC clients of an application host — at most one mobile and one desktop
+ * client — signing people in with PKCE and calling every plugin of the host
+ * with one bearer token; each person's sign-in on a device is a grant that
+ * ends with their standing.
  *
  * Subcommands:
  *   list                                Every native client, its host and state
  *   create <slug> --host <fqdn | id> --name <name> --redirect <path,…> [settings] [--disabled]
+ *   create <slug> --kind desktop --host <fqdn | id> --name <name> --loopback-path <path> [settings]
  *                                       Register lamaste-native-<slug> for an application
  *                                       host (a plugin-owned site, or a tunnel bound to
- *                                       plugin routes)
+ *                                       plugin routes): a mobile app (HTTPS redirect paths
+ *                                       on the host) or a desktop app (loopback redirects,
+ *                                       http://127.0.0.1<path> on any port)
  *   update <client> [settings]          Change its settings
  *   enable|disable <client>             Disabling ends every grant and stops sign-ins
  *   delete <client> [--yes]             Delete it; every grant ends
@@ -19,7 +23,8 @@
  *   revoke <client> --grant <id> | --user <u>
  *                                       End one grant, or every grant of a person
  *
- * Settings: --name, --redirect <path,…>, --access-minutes <5–15>,
+ * Settings: --name, --redirect <path,…> (mobile), --loopback-path <path>
+ * (desktop, repeatable), --access-minutes <5–15>,
  * --idle-days <n>, --absolute-days <n>, --ios-team <team> --ios-bundle <id,…>,
  * --android <package>=<fingerprint>[,…] (repeatable).
  *
@@ -45,6 +50,7 @@ import {
   findApplicationHost,
   grantLine,
   nativeClientRows,
+  nativeKindMismatch,
   nativeSettingsBody,
   parseNativeAppsArgs,
 } from '../native-apps.js';
@@ -94,7 +100,10 @@ ${b('Usage:')} lamaste-server native-apps <subcommand>
 ${b('Subcommands:')}
   ${c('list')}                              Every native client, its host and whether it signs people in
   ${c('create <slug> --host <fqdn | id> --name <name> --redirect <path,…> [settings] [--disabled]')}
-                                    Register lamaste-native-<slug> for an application host
+                                    Register lamaste-native-<slug>, a mobile app, for an application host
+  ${c('create <slug> --kind desktop --host <fqdn | id> --name <name> --loopback-path <path> [settings]')}
+                                    The same for a desktop app: it receives the sign-in on
+                                    http://127.0.0.1:<any port><path>
   ${c('update <client> [settings]')}        Change its settings
   ${c('enable|disable <client>')}           Disabling stops sign-ins and ends every grant
   ${c('delete <client> [--yes]')}           Delete it; every grant ends
@@ -105,7 +114,8 @@ ${b('Subcommands:')}
 
 ${b('Settings:')}
   --name <name>                     Shown on the sign-in consent screen
-  --redirect <path,…>               1–4 redirect paths on the host (claimed by the app)
+  --redirect <path,…>               Mobile: 1–4 redirect paths on the host (claimed by the app)
+  --loopback-path <path>            Desktop: a loopback redirect path (repeat, 1–4)
   --access-minutes <5–15>           Access token lifetime (default 15)
   --idle-days <n> --absolute-days <n>
                                     Grant lifetimes (defaults 30 and 90)
@@ -156,18 +166,28 @@ async function listCmd({ json }) {
 }
 
 async function createCmd(parsed, { json }) {
-  const { flags, android } = parsed;
-  for (const flag of ['--host', '--name', '--redirect']) {
+  const { flags, android, loopback } = parsed;
+  const kind = flags.get('--kind') ?? 'mobile';
+  const mismatch = nativeKindMismatch(kind, parsed);
+  if (mismatch) fail(mismatch, json);
+  for (const flag of ['--host', '--name']) {
     if (!flags.has(flag)) fail(`create needs ${flag} — ${NATIVE_APPS_USAGE}`, json);
+  }
+  if (kind === 'mobile' && !flags.has('--redirect')) {
+    fail(`create needs --redirect — ${NATIVE_APPS_USAGE}`, json);
+  }
+  if (kind === 'desktop' && loopback.length === 0) {
+    fail(`create --kind desktop needs --loopback-path — ${NATIVE_APPS_USAGE}`, json);
   }
   const host = findApplicationHost(
     { sites: await readSites(), tunnels: await readTunnels() },
     String(flags.get('--host')),
   );
   if (host.error) fail(host.error, json);
-  const settings = nativeSettingsBody(flags, android);
+  const settings = nativeSettingsBody(flags, android, {}, loopback);
   if (!settings.ok) fail(settings.error, json);
   const result = await call(json, 'POST', '/api/native-apps', {
+    kind,
     slug: parsed.target,
     hostKind: host.hostKind,
     hostId: host.hostId,
@@ -186,7 +206,9 @@ async function createCmd(parsed, { json }) {
 
 async function updateCmd(clientId, parsed, { json }) {
   const current = (await call(json, 'GET', clientPath(clientId))).client;
-  const settings = nativeSettingsBody(parsed.flags, parsed.android, current);
+  const mismatch = nativeKindMismatch(current.kind ?? 'mobile', parsed);
+  if (mismatch) fail(mismatch, json);
+  const settings = nativeSettingsBody(parsed.flags, parsed.android, current, parsed.loopback);
   if (!settings.ok) fail(settings.error, json);
   if (Object.keys(settings.body).length === 0) fail('Nothing to change', json);
   const result = await call(json, 'PATCH', clientPath(clientId), settings.body);

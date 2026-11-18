@@ -532,10 +532,13 @@ async function remove(args, label, json) {
   console.log('');
   console.log(
     chalk.green(
-      `  Removed the agent half of ${route}${purge ? ' with its data and account' : ''}.`,
+      `  Removed the agent half of ${route}${purge ? ' with its data, keys and account' : ''}.`,
     ),
   );
-  if (!purge) console.log(`  Its data is kept in ${APPHOST_PATHS.dataDir(route)}.`);
+  if (!purge) {
+    console.log(`  Its data is kept in ${APPHOST_PATHS.dataDir(route)},`);
+    console.log(`  its keys (if it had a key directory) in ${APPHOST_PATHS.keysDir(route)}.`);
+  }
   console.log(
     chalk.yellow(
       '  If its relay still lists the plugin as hosted here, unhost or uninstall it there.',

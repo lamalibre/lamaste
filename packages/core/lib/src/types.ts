@@ -25,7 +25,7 @@ import type {
   InvitationPolicyInput,
   InvitationPolicyView,
 } from './invitations.js';
-import type { NativeAssociations, NativeGrantEndReason } from './native-apps.js';
+import type { NativeAssociations, NativeClientKind, NativeGrantEndReason } from './native-apps.js';
 import type { SettingsField, SettingsValue } from './plugin-settings.js';
 import type { AgentBlock } from './schemas.js';
 
@@ -133,6 +133,8 @@ export interface RetainedAgentData {
   readonly operation: string | null;
   /** What a purge deletes on the agent: the data directory… */
   readonly dataDir: string;
+  /** …the key directory, if the agent half had one (`APPHOST_PATHS.keysDir`)… */
+  readonly keysDir: string;
   /** …and the account (user and group) the agent half ran as. */
   readonly serviceUser: string;
 }
@@ -660,18 +662,23 @@ export interface UserSurfaceRouteStatus {
 // ---------------------------------------------------------------------------
 
 /**
- * A native client of an application host, as the panel shows it: its
- * settings, its host resolved (`fqdn`, `domain`, null when the host entry is
- * gone or lies under no active domain), whether Authelia serves it and why
- * not, the audience and redirect URIs it is rendered with, and the routes
- * its host binds and serves.
+ * A native client of an application host, as the panel shows it: its kind
+ * and settings, its host resolved (`fqdn`, `domain`, null when the host
+ * entry is gone or lies under no active domain), whether Authelia serves it
+ * and why not, the audience and redirect URIs it is rendered with, and the
+ * routes its host binds and serves.
  */
 export interface NativeClientView {
   readonly clientId: string;
+  /** `mobile` (claimed paths on the host) or `desktop` (loopback paths on the device). */
+  readonly kind: NativeClientKind;
   readonly hostKind: 'site' | 'tunnel';
   readonly hostId: string;
   readonly name: string;
+  /** A mobile client's redirect paths on the host; empty for a desktop client. */
   readonly redirectPaths: readonly string[];
+  /** A desktop client's loopback paths (`http://127.0.0.1<path>`); empty for a mobile client. */
+  readonly loopbackPaths: readonly string[];
   readonly accessTokenMinutes: number;
   readonly idleDays: number;
   readonly absoluteDays: number;
@@ -700,24 +707,47 @@ export interface NativeClientView {
   readonly servedRoutes: readonly string[];
 }
 
-/** What creates a native client (core `NativeClientCreateSchema`). */
-export interface NativeClientCreateRequest {
+interface NativeClientCreateCommon {
   readonly slug: string;
   readonly hostKind: 'site' | 'tunnel';
   readonly hostId: string;
   readonly name: string;
-  readonly redirectPaths: readonly string[];
+  readonly accessTokenMinutes?: number;
+  readonly idleDays?: number;
+  readonly absoluteDays?: number;
+  readonly enabled?: boolean;
+}
+
+/**
+ * What creates a native client (core `NativeClientCreateSchema`): a mobile
+ * client (`kind` may be left out) with its redirect paths on the host and
+ * its app association setting, or a desktop client with its loopback paths.
+ */
+export type NativeClientCreateRequest = NativeClientCreateCommon &
+  (
+    | {
+        readonly kind?: 'mobile';
+        readonly redirectPaths: readonly string[];
+        readonly associations?: NativeAssociations;
+      }
+    | { readonly kind: 'desktop'; readonly loopbackPaths: readonly string[] }
+  );
+
+/**
+ * A change to a native client (core `NativeClientUpdateSchema`); `enabled`
+ * enables or disables it. Its kind never changes; `redirectPaths` and
+ * `associations` fit a mobile client, `loopbackPaths` a desktop client.
+ */
+export interface NativeClientUpdateRequest {
+  readonly name?: string;
+  readonly redirectPaths?: readonly string[];
+  readonly loopbackPaths?: readonly string[];
   readonly accessTokenMinutes?: number;
   readonly idleDays?: number;
   readonly absoluteDays?: number;
   readonly associations?: NativeAssociations;
   readonly enabled?: boolean;
 }
-
-/** A change to a native client (core `NativeClientUpdateSchema`); `enabled` enables or disables it. */
-export type NativeClientUpdateRequest = Partial<
-  Omit<NativeClientCreateRequest, 'slug' | 'hostKind' | 'hostId'>
->;
 
 /** One person's sign-in on one device with one native client. */
 export interface NativeGrantView {

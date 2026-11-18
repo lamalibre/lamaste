@@ -1,14 +1,14 @@
 # Native Apps
 
-> A native (mobile) app signs a person in through the relay's sign-in and calls the user surfaces of the agent-hosted plugins on one host with a bearer token, checked exactly as a browser session is. Design: [`native-apps-design.md`](../native-apps-design.md).
+> A native app — a mobile app, or a desktop app (4.15) — signs a person in through the relay's sign-in and calls the user surfaces of the agent-hosted plugins on one host with a bearer token, checked exactly as a browser session is. Design: [`native-apps-design.md`](../native-apps-design.md); desktop clients: [`desktop-native-clients-design.md`](../desktop-native-clients-design.md).
 
 ## In Plain English
 
-A plugin's users normally reach it in a browser: Authelia signs them in, and Gatekeeper vouches for their session on the plugin's host. A phone app has no browser session. Instead, an administrator registers a **native client** for the **application host** — a plugin-owned site, or a tunnel bound to plugin routes — and the app signs people in with OpenID Connect (authorization code with PKCE) on the domain's sign-in page. It then sends `Authorization: Bearer <access token>` to `https://<host>/api/<route>/app/*` for every plugin the host serves. Each person's sign-in on one device is a **grant**: its refresh tokens rotate on every use, and it ends when the person's standing ends — disabled, removed, out of the domain, or without a role on the host's plugins — or when an administrator or the app ends it.
+A plugin's users normally reach it in a browser: Authelia signs them in, and Gatekeeper vouches for their session on the plugin's host. A phone or desktop app has no browser session. Instead, an administrator registers a **native client** for the **application host** — a plugin-owned site, or a tunnel bound to plugin routes — and the app signs people in with OpenID Connect (authorization code with PKCE) on the domain's sign-in page. It then sends `Authorization: Bearer <access token>` to `https://<host>/api/<route>/app/*` for every plugin the host serves. A **mobile** client's sign-in returns to an HTTPS path on the host that the app claims (Universal Links, App Links); a **desktop** client's returns to a listener the app opens on the device's loopback (`http://127.0.0.1:<any port><path>`). Each person's sign-in on one device is a **grant**: its refresh tokens rotate on every use, and it ends when the person's standing ends — disabled, removed, out of the domain, or without a role on the host's plugins — or when an administrator or the app ends it.
 
 ## Application hosts
 
-A native client belongs to one application host, and one host has at most one native client. The host is where everything the app needs lives: every plugin's `/api/<route>/app/*`, the app's redirect paths, and the app association files. Its **audience** is `https://<fqdn>`, so one access token serves every plugin on it.
+A native client belongs to one application host, and one host has at most one native client **of each kind** — a mobile client and a desktop client. The host is where everything the app needs lives: every plugin's `/api/<route>/app/*` and, for a mobile client, the app's redirect paths and the app association files. Its **audience** is `https://<fqdn>`, so one access token — of either client — serves every plugin on it.
 
 A host serves several plugins:
 
@@ -21,21 +21,23 @@ A route is served on one host at most. On every host, a bound route that is not 
 
 Admin certificate only. Stored in the panel's `state.db` (`native_clients`, migration `0023`).
 
-| Field                | Type                   | Notes                                                                                                                                                                                                                                           |
-| -------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clientId`           | `string`               | `lamaste-native-<slug>`; slug: 1–40 lower-case letters, digits and inner hyphens. The `lamaste-` prefix is Lamaste's: a plugin manifest may not declare such an OIDC client                                                                     |
-| `hostKind`, `hostId` | `site` \| `tunnel`, id | The application host. Its `fqdn` and `domain` are derived on every read                                                                                                                                                                         |
-| `name`               | `string`               | 1–100 characters; shown on Authelia's consent screen                                                                                                                                                                                            |
-| `redirectPaths`      | `string[]`             | 1–4 paths on the host (`/a/b`, ≤ 128, no dot segments, not under `/api/`, `/.well-known/` or `/internal/`); the redirect URIs are `https://<fqdn><path>`. The host answers them itself — in place of whatever its backend or shell serves there |
-| `accessTokenMinutes` | `number`               | 5–15, default 15                                                                                                                                                                                                                                |
-| `idleDays`           | `number`               | 1–365, default 30 — a grant ends when not refreshed for this long                                                                                                                                                                               |
-| `absoluteDays`       | `number`               | 1–365, default 90 — a grant ends this long after sign-in; `idleDays ≤ absoluteDays`                                                                                                                                                             |
-| `associations`       | `object`               | [App association files](#app-association-files)                                                                                                                                                                                                 |
-| `enabled`            | `boolean`              | A disabled client is not rendered into Authelia (no sign-ins) and every grant of it ends                                                                                                                                                        |
+| Field                | Type                   | Notes                                                                                                                                                                                                                                                        |
+| -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `kind`               | `mobile` \| `desktop`  | Default `mobile` (a body without it is a mobile client, as before 4.15). Never changes — delete and create instead                                                                                                                                           |
+| `clientId`           | `string`               | `lamaste-native-<slug>`; slug: 1–40 lower-case letters, digits and inner hyphens. The `lamaste-` prefix is Lamaste's: a plugin manifest may not declare such an OIDC client                                                                                  |
+| `hostKind`, `hostId` | `site` \| `tunnel`, id | The application host. Its `fqdn` and `domain` are derived on every read                                                                                                                                                                                      |
+| `name`               | `string`               | 1–100 characters; shown on Authelia's consent screen                                                                                                                                                                                                         |
+| `redirectPaths`      | `string[]`             | Mobile only: 1–4 paths on the host (`/a/b`, ≤ 128, no dot segments, not under `/api/`, `/.well-known/` or `/internal/`); the redirect URIs are `https://<fqdn><path>`. The host answers them itself — in place of whatever its backend or shell serves there |
+| `loopbackPaths`      | `string[]`             | Desktop only: 1–4 paths on the device (`/a/b`, ≤ 128, no dot segments); the redirect URIs are `http://127.0.0.1<path>`, with no port — see [Desktop apps](#desktop-apps)                                                                                     |
+| `accessTokenMinutes` | `number`               | 5–15, default 15                                                                                                                                                                                                                                             |
+| `idleDays`           | `number`               | 1–365, default 30 — a grant ends when not refreshed for this long                                                                                                                                                                                            |
+| `absoluteDays`       | `number`               | 1–365, default 90 — a grant ends this long after sign-in; `idleDays ≤ absoluteDays`                                                                                                                                                                          |
+| `associations`       | `object`               | Mobile only: [App association files](#app-association-files)                                                                                                                                                                                                 |
+| `enabled`            | `boolean`              | A disabled client is not rendered into Authelia (no sign-ins) and every grant of it ends                                                                                                                                                                     |
 
 A client is **served** — rendered into Authelia's OIDC provider — while it is enabled, its host entry exists, is enabled and not public, and lies under an active domain. Otherwise `served: false` with a `reason`: `disabled`, `host_missing`, `host_public`, `host_disabled`, `domain_inactive`. A tunnel with a native client cannot be made public (`PATCH /api/tunnels/:id` answers `409` with `code: native_client_conflict`), and every backend location of a host with a native client, served or not, clears `Authorization` and hides the backend's `WWW-Authenticate`.
 
-**In Authelia** (core `renderNativeClient`): `public: true`, `token_endpoint_auth_method: none`, `require_pkce: true`, `pkce_challenge_method: S256`, `grant_types: [authorization_code, refresh_token]`, `response_types: [code]`, `scopes: [openid, offline_access, profile]`, `access_token_signed_response_alg: RS256` (a JWT `typ: at+jwt`), `requested_audience_mode: implicit` with `audience: [https://<fqdn>]`, a claims policy putting `preferred_username` in the access token, `consent_mode: explicit` (`offline_access` makes Authelia ask for consent at every sign-in in any mode), a lifespan `lamaste_client_<id>` (access and ID tokens `accessTokenMinutes`, refresh token `idleDays`), and the authorization policy `lamaste_client_<id>`: the members of the host's domain, and its external members granted the host, with `two_factor` — the factor the domain's access rules ask of its hosts' members (`HOST_ACCESS_FACTOR`). A change restarts Authelia.
+**In Authelia** (core `renderNativeClient`): `public: true`, `token_endpoint_auth_method: none`, `require_pkce: true`, `pkce_challenge_method: S256`, `grant_types: [authorization_code, refresh_token]`, `response_types: [code]`, `scopes: [openid, offline_access, profile]`, `redirect_uris` by kind (`https://<fqdn><path>`, or `http://127.0.0.1<path>`), `access_token_signed_response_alg: RS256` (a JWT `typ: at+jwt`), `requested_audience_mode: implicit` with `audience: [https://<fqdn>]`, a claims policy putting `preferred_username` in the access token, `consent_mode: explicit` (`offline_access` makes Authelia ask for consent at every sign-in in any mode), a lifespan `lamaste_client_<id>` (access and ID tokens `accessTokenMinutes`, refresh token `idleDays`), and the authorization policy `lamaste_client_<id>`: the members of the host's domain, and its external members granted the host, with `two_factor` — the factor the domain's access rules ask of its hosts' members (`HOST_ACCESS_FACTOR`). A change restarts Authelia.
 
 ### `GET /api/native-apps`
 
@@ -44,10 +46,12 @@ A client is **served** — rendered into Authelia's OIDC provider — while it i
   "clients": [
     {
       "clientId": "lamaste-native-shop",
+      "kind": "mobile",
       "hostKind": "site",
       "hostId": "6c0d…",
       "name": "Shop",
       "redirectPaths": ["/oauth/callback"],
+      "loopbackPaths": [],
       "accessTokenMinutes": 15,
       "idleDays": 30,
       "absoluteDays": 90,
@@ -70,7 +74,12 @@ A client is **served** — rendered into Authelia's OIDC provider — while it i
 
 ### `POST /api/native-apps`
 
-Body: `{ slug, hostKind, hostId, name, redirectPaths, accessTokenMinutes?, idleDays?, absoluteDays?, associations?, enabled? }` (core `NativeClientCreateSchema`, strict). `201 { client, warnings? }`. Refused: `400 invalid_request` (the body), `400 not_an_application_host` (no plugin-owned site or bound tunnel under an active domain), `409 client_exists`, `409 host_has_client`. Audit `native-app.created`.
+Body (core `NativeClientCreateSchema`, strict, by kind):
+
+- mobile: `{ kind?: "mobile", slug, hostKind, hostId, name, redirectPaths, accessTokenMinutes?, idleDays?, absoluteDays?, associations?, enabled? }`;
+- desktop: `{ kind: "desktop", slug, hostKind, hostId, name, loopbackPaths, accessTokenMinutes?, idleDays?, absoluteDays?, enabled? }` — `redirectPaths` and `associations` are refused.
+
+`201 { client, warnings? }`. Refused: `400 invalid_request` (the body), `400 not_an_application_host` (no plugin-owned site or bound tunnel under an active domain), `409 client_exists`, `409 host_has_client` (the host has a client of that kind). Audit `native-app.created` (with the kind).
 
 ### `GET /api/native-apps/:clientId`
 
@@ -78,18 +87,18 @@ Body: `{ slug, hostKind, hostId, name, redirectPaths, accessTokenMinutes?, idleD
 
 ### `PATCH /api/native-apps/:clientId`
 
-Any of `name`, `redirectPaths`, `accessTokenMinutes`, `idleDays`, `absoluteDays`, `associations`, `enabled` (core `NativeClientUpdateSchema`; the host never changes). `{ client, warnings? }`. Disabling ends every grant (`client_disabled`). Audit `native-app.updated`, `native-app.enabled`, `native-app.disabled`.
+Any of `name`, `redirectPaths` (mobile), `loopbackPaths` (desktop), `accessTokenMinutes`, `idleDays`, `absoluteDays`, `associations` (mobile), `enabled` (core `NativeClientUpdateSchema`; the host and the kind never change; a setting of the other kind is `400 invalid_request` — core `nativeClientUpdateKindError`). `{ client, warnings? }`. Disabling ends every grant (`client_disabled`). Audit `native-app.updated`, `native-app.enabled`, `native-app.disabled`.
 
 ### `DELETE /api/native-apps/:clientId`
 
-Every grant ends (`client_deleted`); the host stops serving the association files and redirect paths. `{ ok: true, warnings? }`. Deleting the host (the tunnel, the site) deletes its client (`host_deleted`). Moving a plugin's user surface from a tunnel to its own site moves the tunnel's client with it when the tunnel served that plugin alone (`native-app.host.moved`). Audit `native-app.deleted`.
+Every grant ends (`client_deleted`); for a mobile client, the host stops serving the association files and redirect paths. `{ ok: true, warnings? }`. Deleting the host (the tunnel, the site) deletes its client (`host_deleted`). Moving a plugin's user surface from a tunnel to its own site moves the tunnel's client with it when the tunnel served that plugin alone (`native-app.host.moved`). Audit `native-app.deleted`.
 
 ## Signing in
 
 The app uses the domain's standard OpenID Connect endpoints (`https://auth.<domain>/.well-known/openid-configuration`):
 
-1. Opens `https://auth.<domain>/api/oidc/authorization?client_id=<id>&response_type=code&redirect_uri=https://<fqdn><path>&scope=openid%20offline_access%20profile&code_challenge=<S256>&code_challenge_method=S256&state=…` in the system browser (`ASWebAuthenticationSession`, Custom Tabs). The person signs in (two factors), Authelia applies the client's authorization policy, asks for consent, and redirects to the claimed redirect URI with `code`. `plain` or a missing challenge is refused (`invalid_request` to the redirect URI), as is a person the policy refuses (`access_denied`).
-2. Exchanges the code at `https://auth.<domain>/api/oidc/token` (`grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`) and, optionally, `device_name` (≤ 64 printable characters — Lamaste's own parameter, removed before Authelia sees the request; it names the device in grant listings). The answer is Authelia's: `access_token` (JWT, `expires_in` up to 900), `refresh_token`, `id_token`.
+1. Opens `https://auth.<domain>/api/oidc/authorization?client_id=<id>&response_type=code&redirect_uri=<a registered redirect URI>&scope=openid%20offline_access%20profile&code_challenge=<S256>&code_challenge_method=S256&state=…` in the system browser (`ASWebAuthenticationSession`, Custom Tabs; the default browser on a desktop). The person signs in (two factors), Authelia applies the client's authorization policy, asks for consent, and redirects to the redirect URI with `code`. `plain` or a missing challenge is refused (`invalid_request` to the redirect URI), as is a person the policy refuses (`access_denied`).
+2. Exchanges the code at `https://auth.<domain>/api/oidc/token` (`grant_type=authorization_code`, `code`, `redirect_uri` — exactly the one of step 1, a loopback port included —, `client_id`, `code_verifier`) and, optionally, `device_name` (≤ 64 printable characters — Lamaste's own parameter, removed before Authelia sees the request; it names the device in grant listings). The answer is Authelia's: `access_token` (JWT, `expires_in` up to 900), `refresh_token`, `id_token`.
 3. Calls the host's plugins with `Authorization: Bearer <access_token>`, and refreshes (`grant_type=refresh_token`, `refresh_token`, `client_id`) **one at a time**, always with the latest refresh token.
 4. Signs out by revoking its refresh token at `https://auth.<domain>/api/oidc/revocation` (`token`, `client_id`): the grant ends.
 
@@ -188,13 +197,32 @@ A person's grants with every native client; `404 user_not_found`.
 
 A request to `https://<host>/api/<route>/app/*` carrying `Authorization` is authenticated by its token **instead of** a session cookie (a cookie beside it is ignored — a browser never attaches a bearer token by itself).
 
-1. **Gatekeeper** (`/authz/user-surface/<fqdn>`, which already receives the request's headers) takes the bearer path for the `Bearer` scheme only — any other `Authorization` (a Basic login a browser cached for the host) is ignored and the session decides — and requires exactly `Bearer <compact JWS>` (≤ 8 KiB) and verifies it (core `verifyNativeAccessToken`): `alg: RS256`, `typ: at+jwt`, a `kid` of the issuer's key set (from Authelia's `jwks.json`, cached, fetched again on an unknown key or a bad signature at most every 30 s), the signature, `iss` = `https://auth.<domain of the host>`, `aud` containing `https://<fqdn>`, `client_id` = the host's native client (from the panel's `native-apps.json` projection; missing or unreadable → every bearer refused), `exp` in the future, `iat`/`nbf` within 30 s, a lifetime of at most 15 minutes (+30 s), a UUID `jti`, a Lamaste username in `preferred_username`. Then exactly a session's checks: domain membership (external members only where they would be admitted), the host's grant on a `restricted` host, the route served on this host. It signs the panel's relay assertion with `credential: { kind: "bearer", clientId, tokenSha256, exp }` beside the username. A token that fails → `401` with `X-Lamalibre-Refusal: invalid_token`; no keys yet → `503`.
+1. **Gatekeeper** (`/authz/user-surface/<fqdn>`, which already receives the request's headers) takes the bearer path for the `Bearer` scheme only — any other `Authorization` (a Basic login a browser cached for the host) is ignored and the session decides — and requires exactly `Bearer <compact JWS>` (≤ 8 KiB) and verifies it (core `verifyNativeAccessToken`): `alg: RS256`, `typ: at+jwt`, a `kid` of the issuer's key set (from Authelia's `jwks.json`, cached, fetched again on an unknown key or a bad signature at most every 30 s), the signature, `iss` = `https://auth.<domain of the host>`, `aud` containing `https://<fqdn>`, `client_id` = one of the host's native clients, of either kind (from the panel's `native-apps.json` projection, which lists each with its `kind`; missing or unreadable → every bearer refused), `exp` in the future, `iat`/`nbf` within 30 s, a lifetime of at most 15 minutes (+30 s), a UUID `jti`, a Lamaste username in `preferred_username`. Then exactly a session's checks: domain membership (external members only where they would be admitted), the host's grant on a `restricted` host, the route served on this host. It signs the panel's relay assertion with `credential: { kind: "bearer", clientId, tokenSha256, exp }` beside the username. A token that fails → `401` with `X-Lamalibre-Refusal: invalid_token`; no keys yet → `503`.
 2. **nginx** answers a bearer's `401` as `401 { "error": "invalid_token" }` with `WWW-Authenticate: Bearer error="invalid_token"` (a session's stays `{ "error": "unauthenticated" }`), and never passes `Authorization` to the panel.
 3. **The panel** requires the token to be **live**: recorded by the broker for a grant that has not ended, of this client and this person, within its lifetimes — else the same `401 invalid_token`. A live token for a route or a client that is not served for now (a hosting moving, the host disabled) is `503 { "error": "The plugin is not available right now" }`, so the app keeps it. Ending a grant therefore ends its access tokens at once; an access token minted any other way than through the broker is never accepted. The rest is a browser session's path: the user resolved in the directory (active, entitled, the plugin ready) and forwarded to the agent half as the same `{ type: "user", userId, username, roles }` caller — the half never sees the token, the client or the grant. The `Origin` rule for requests that change something is waived for a bearer (a native HTTP stack sends no `Origin`, and no browser attaches the token); `Sec-Fetch-*` rules stay. An open response ends when its grant ends (`grant_revoked`).
 
+## Desktop apps
+
+A desktop app (Windows, macOS, Linux) cannot claim an HTTPS path on the host, so its client — `kind: "desktop"` — redirects to a listener the app opens on the device: RFC 8252 §7.3. Registered with its `loopbackPaths`, it is rendered with the redirect URIs `http://127.0.0.1<path>` and **no port**. Authelia (4.39.28, verified 2026-11-17) compares a loopback IP literal's redirect without its port and its path exactly, so the app listens on any free port; `localhost`, `[::1]` and `https://127.0.0.1` are refused against it. A desktop client has no association files and nothing on the host: no `/.well-known/` file and no redirect page are served for it. Everything else is a mobile client's: the broker, grants, rotation, reuse, standing, revocation per device, sign-in events, the bearer path — the agent half sees the same `user` caller.
+
+What the app must do:
+
+1. Read the issuer's settings at `https://auth.<domain>/.well-known/openid-configuration`.
+2. Bind a TCP listener on `127.0.0.1` only (never `0.0.0.0`), on port 0 — any free port — before it opens the browser.
+3. Open the **system browser**, never an embedded web view (RFC 8252 §8.12), at the authorization endpoint with `response_type=code`, its `client_id`, `redirect_uri=http://127.0.0.1:<port><registered path>`, `scope=openid offline_access profile`, a fresh `state` and a PKCE `S256` `code_challenge`.
+4. Accept one request on the listener, check `state`, answer a short page saying the window can be closed, and close the listener.
+5. Exchange the code with the **same** `redirect_uri` (another port is `invalid_grant`) and the `code_verifier`; optionally `device_name`.
+6. Keep the refresh token in the operating system's credential store (Windows Credential Manager, macOS Keychain, libsecret), never in a file; the access token in memory.
+7. Refresh one at a time — two refreshes at once with one token are a reuse, and end the grant.
+8. On `invalid_grant` at a refresh, sign in again: the grant's idle or absolute lifetime ended, or the person's standing did.
+9. Sign out by revoking the refresh token.
+10. Call `https://<host>/api/<route>/app/*` with `Authorization: Bearer <access token>`.
+
+**An unattended device** (signed in once by a dedicated account, offline for hours or days): its grant ends when it is not refreshed for `idleDays`, so set `idleDays` above the longest outage expected, and `absoluteDays` to how often a fresh sign-in is acceptable (up to 365). Each sign-in shows Authelia's consent screen once (`offline_access`). Give the account only the plugin role the device needs; a lost or compromised device's grant is ended from the panel or the CLI.
+
 ## App association files
 
-The client's `associations` (core `NativeAssociationsSchema`, ≤ 10 entries each):
+For a mobile client only. The client's `associations` (core `NativeAssociationsSchema`, ≤ 10 entries each):
 
 ```json
 {
@@ -220,7 +248,7 @@ The host's vhost serves, **before any authorization**: `/.well-known/apple-app-s
 
 ## Sign-in events
 
-A plugin whose identity block declares `"signInEvents": true` ([Agent-Hosted Plugins → The identity block](agent-hosted-plugins.md#the-identity-block)) is told when one of its users signs in with the native client of the host that serves it: one event per grant created, queued for every plugin the host serves that declares it, is approved, and has the person as an active audience member then. Browser sign-ins are not events — Authelia tells Lamaste nothing about them.
+A plugin whose identity block declares `"signInEvents": true` ([Agent-Hosted Plugins → The identity block](agent-hosted-plugins.md#the-identity-block)) is told when one of its users signs in with a native client (of either kind) of the host that serves it: one event per grant created, queued for every plugin the host serves that declares it, is approved, and has the person as an active audience member then. Browser sign-ins are not events — Authelia tells Lamaste nothing about them.
 
 ```
 POST /admin/identity/sign-ins   { "protocol": 1, "from": <seq>, "to": <seq>, "events": <sealed> }
@@ -233,6 +261,6 @@ An agent half answers it with `createSignInEventsHandler({ verifier, onEvents })
 
 ## Panel, CLI, desktop
 
-- **Panel**: **Native Apps** page — register a client for a free application host; each client's state, audience, redirect URIs, lifetimes, plugins served, association files (with their URLs), edit, enable/disable, delete, and its grants (filter by person, live/ended/all, end one); **Users** → a person's devices; a plugin's **Web surface** → Joined plugins; **Tunnels** → User surface, the cross-agent confirmation.
-- **CLI**: `lamaste-server native-apps list | create <slug> --host <fqdn | id> --name <n> --redirect <path,…> [--access-minutes n] [--idle-days n] [--absolute-days n] [--ios-team t --ios-bundle id,…] [--android <package>=<fp>[,<fp>]]… [--disabled] | update <client> [settings] | enable|disable <client> | delete <client> [--yes] | grants <client> [--user <u>] [--status …] | revoke <client> --grant <id> | --user <u>`, `lamaste-server users native-grants <username>`, `plugins web-surface <name> join|leave <route>`, `tunnels bind-user-surface <tunnel> <plugin> --cross-agent`.
+- **Panel**: **Native Apps** page — register a Mobile or Desktop client for an application host free for that kind (a desktop client: loopback paths and the redirect URIs they make, no associations); each client's state, audience, redirect URIs, lifetimes, plugins served, association files (with their URLs), edit, enable/disable, delete, and its grants (filter by person, live/ended/all, end one); **Users** → a person's devices; a plugin's **Web surface** → Joined plugins; **Tunnels** → User surface, the cross-agent confirmation.
+- **CLI**: `lamaste-server native-apps list | create <slug> --host <fqdn | id> --name <n> (--redirect <path,…> | --kind desktop --loopback-path <path>…) [--access-minutes n] [--idle-days n] [--absolute-days n] [--ios-team t --ios-bundle id,…] [--android <package>=<fp>[,<fp>]]… [--disabled] | update <client> [settings] (`--loopback-path` for a desktop client; a setting of the other kind is refused before anything is sent) | enable|disable <client> | delete <client> [--yes] | grants <client> [--user <u>] [--status …] | revoke <client> --grant <id> | --user <u>`, `lamaste-server users native-grants <username>`, `plugins web-surface <name> join|leave <route>`, `tunnels bind-user-surface <tunnel> <plugin> --cross-agent`.
 - **AdminClient** (web and desktop): `listNativeApps`, `createNativeApp`, `updateNativeApp`, `deleteNativeApp`, `listNativeGrants`, `revokeNativeGrant`, `revokeUserNativeGrants`, `getUserNativeGrants`, `joinWebSurfaceRoute`, `leaveWebSurfaceRoute`, `bindTunnelUserSurface(id, route, { crossAgent })`.
