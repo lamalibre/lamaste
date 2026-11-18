@@ -12,6 +12,7 @@ import {
   grantEndWords,
   grantLine,
   nativeClientRows,
+  nativeKindMismatch,
   nativeSettingsBody,
   parseNativeAppsArgs,
 } from '../src/native-apps.js';
@@ -130,6 +131,8 @@ test('what a client and a grant print', () => {
   assert.deepEqual(rows[0], ['name', 'Shop[2J']);
   assert.match(Object.fromEntries(rows).state, /disabled/);
   assert.match(Object.fromEntries(rows).Android, /1 fingerprint/);
+  // A 4.14 client (no kind) is a mobile one.
+  assert.equal(Object.fromEntries(rows).kind, 'mobile');
   const line = grantLine({
     grantId: 'g',
     clientId: 'lamaste-native-shop',
@@ -144,4 +147,82 @@ test('what a client and a grant print', () => {
   assert.match(line, /alice · unnamed device/);
   assert.match(line, /spent refresh token/);
   assert.equal(grantEndWords('standing:no_role').includes('no role'), true);
+});
+
+test('desktop clients: --kind, repeatable --loopback-path, and no mixing of kinds', () => {
+  const parsed = parseNativeAppsArgs([
+    'create',
+    'till',
+    '--kind',
+    'desktop',
+    '--host',
+    'shop.example.com',
+    '--name',
+    'Till',
+    '--loopback-path',
+    '/callback',
+    '--loopback-path',
+    '/a,/b',
+  ]);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.flags.get('--kind'), 'desktop');
+  assert.deepEqual(parsed.loopback, ['/callback', '/a', '/b']);
+  assert.equal(nativeKindMismatch('desktop', parsed), null);
+  assert.deepEqual(nativeSettingsBody(parsed.flags, parsed.android, {}, parsed.loopback).body, {
+    loopbackPaths: ['/callback', '/a', '/b'],
+    name: 'Till',
+  });
+  assert.match(
+    parseNativeAppsArgs(['create', 'x', '--kind', 'tv']).error,
+    /--kind is mobile or desktop/,
+  );
+  assert.match(parseNativeAppsArgs(['update', 'x', '--kind', 'desktop']).error, /takes no --kind/);
+  assert.equal(parseNativeAppsArgs(['update', 'x', '--loopback-path', '/cb']).ok, true);
+
+  // A desktop client takes no redirect paths or association files; a mobile one no loopback paths.
+  const mixed = parseNativeAppsArgs([
+    'create',
+    'x',
+    '--kind',
+    'desktop',
+    '--redirect',
+    '/cb',
+    '--android',
+    `a.b=${PRINT}`,
+  ]);
+  assert.match(
+    nativeKindMismatch('desktop', mixed),
+    /no --redirect, --android \(mobile clients only\)/,
+  );
+  const loop = parseNativeAppsArgs(['update', 'x', '--loopback-path', '/cb']);
+  assert.match(nativeKindMismatch('mobile', loop), /no --loopback-path \(desktop clients only\)/);
+  assert.equal(
+    nativeKindMismatch('mobile', parseNativeAppsArgs(['update', 'x', '--redirect', '/cb'])),
+    null,
+  );
+});
+
+test('what a desktop client prints: its kind and its loopback redirect URIs', () => {
+  const rows = Object.fromEntries(
+    nativeClientRows({
+      clientId: 'lamaste-native-till',
+      kind: 'desktop',
+      name: 'Till',
+      hostKind: 'site',
+      fqdn: 'shop.example.com',
+      served: true,
+      audience: 'https://shop.example.com',
+      redirectUris: ['http://127.0.0.1/callback'],
+      redirectPaths: [],
+      loopbackPaths: ['/callback'],
+      accessTokenMinutes: 15,
+      idleDays: 30,
+      absoluteDays: 90,
+      servedRoutes: ['shop'],
+      associations: {},
+    }),
+  );
+  assert.equal(rows.kind, 'desktop (loopback redirects)');
+  assert.equal(rows['redirect URIs'], 'http://127.0.0.1/callback');
+  assert.equal(rows.iOS, undefined);
 });

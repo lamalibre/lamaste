@@ -4,11 +4,11 @@
  * (packages/core/docs/native-apps-design.md).
  */
 
-import { isNativeClientId, nativeClientId } from '@lamalibre/lamaste';
+import { NATIVE_CLIENT_KINDS, isNativeClientId, nativeClientId } from '@lamalibre/lamaste';
 import { terminalText } from './plugin-settings.js';
 
 export const NATIVE_APPS_USAGE =
-  'Usage: lamaste-server native-apps list | create <slug> --host <fqdn | id> --name <n> --redirect <path,…> [settings] | update <client> [settings] | enable|disable <client> | delete <client> [--yes] | grants <client> [--user <u>] [--status live|ended|all] | revoke <client> --grant <id> | --user <u>';
+  'Usage: lamaste-server native-apps list | create <slug> --host <fqdn | id> --name <n> (--redirect <path,…> | --kind desktop --loopback-path <path>) [settings] | update <client> [settings] | enable|disable <client> | delete <client> [--yes] | grants <client> [--user <u>] [--status live|ended|all] | revoke <client> --grant <id> | --user <u>';
 
 /**
  * The settings flags `create` and `update` take, and the body field each
@@ -28,15 +28,32 @@ const SETTINGS_FLAGS = {
 
 const NUMBER_FIELDS = new Set(['accessTokenMinutes', 'idleDays', 'absoluteDays']);
 
+/** Flags that may repeat; each value is kept, in order. */
+const REPEATED_FLAGS = new Set(['--android', '--loopback-path']);
+
+/**
+ * The settings only one kind of client takes: a mobile app's redirect paths
+ * on the host and its association files, a desktop app's loopback paths.
+ */
+const KIND_FLAGS = {
+  mobile: ['--redirect', '--ios-team', '--ios-bundle', '--android'],
+  desktop: ['--loopback-path'],
+};
+
 /** The flags each subcommand takes: `true` takes a value, `false` stands alone. */
 const SUBCOMMAND_FLAGS = {
   list: {},
   create: {
     ...Object.fromEntries(Object.keys(SETTINGS_FLAGS).map((f) => [f, true])),
+    '--loopback-path': true,
+    '--kind': true,
     '--host': true,
     '--disabled': false,
   },
-  update: Object.fromEntries(Object.keys(SETTINGS_FLAGS).map((f) => [f, true])),
+  update: {
+    ...Object.fromEntries(Object.keys(SETTINGS_FLAGS).map((f) => [f, true])),
+    '--loopback-path': true,
+  },
   enable: {},
   disable: {},
   delete: { '--yes': false },
@@ -59,10 +76,11 @@ export function clientIdOf(ref) {
  * The arguments of `native-apps …`: the subcommand, its one positional (a
  * client, or `create`'s slug) and its flags — a flag given twice, unknown to
  * the subcommand, or missing its value is refused. `--android` may repeat:
- * `<package>=<fingerprint>[,<fingerprint>…]`, one app each.
+ * `<package>=<fingerprint>[,<fingerprint>…]`, one app each; so may
+ * `--loopback-path` (each a path or a comma list).
  *
  * @param {string[]} args
- * @returns {{ ok: true, sub: string, target: string | null, flags: Map<string, string | true>, android: string[] } | { ok: false, error: string }}
+ * @returns {{ ok: true, sub: string, target: string | null, flags: Map<string, string | true>, android: string[], loopback: string[] } | { ok: false, error: string }}
  */
 export function parseNativeAppsArgs(args) {
   const [sub, ...rest] = args;
@@ -73,6 +91,7 @@ export function parseNativeAppsArgs(args) {
   const positional = [];
   const flags = new Map();
   const android = [];
+  const loopback = [];
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (!arg.startsWith('--')) {
@@ -82,7 +101,7 @@ export function parseNativeAppsArgs(args) {
     if (!Object.hasOwn(allowed, arg)) {
       return { ok: false, error: `${sub} takes no ${arg} — ${NATIVE_APPS_USAGE}` };
     }
-    if (arg !== '--android' && flags.has(arg)) {
+    if (!REPEATED_FLAGS.has(arg) && flags.has(arg)) {
       return { ok: false, error: `${arg} is given twice — ${NATIVE_APPS_USAGE}` };
     }
     if (!allowed[arg]) {
@@ -95,11 +114,37 @@ export function parseNativeAppsArgs(args) {
     }
     i++;
     if (arg === '--android') android.push(value);
+    else if (arg === '--loopback-path') loopback.push(...commaList(value));
     else flags.set(arg, value);
   }
   const wants = sub === 'list' ? 0 : 1;
   if (positional.length !== wants) return { ok: false, error: NATIVE_APPS_USAGE };
-  return { ok: true, sub, target: positional[0] ?? null, flags, android };
+  if (flags.has('--kind') && !NATIVE_CLIENT_KINDS.includes(flags.get('--kind'))) {
+    return { ok: false, error: `--kind is ${NATIVE_CLIENT_KINDS.join(' or ')}` };
+  }
+  return { ok: true, sub, target: positional[0] ?? null, flags, android, loopback };
+}
+
+/**
+ * Why the settings given do not fit a client of `kind`, or null: a desktop
+ * client takes no redirect paths on the host and no association files, a
+ * mobile client no loopback paths. Checked before anything is sent.
+ *
+ * @param {'mobile' | 'desktop'} kind
+ * @param {{ flags: Map<string, string | true>, android: string[], loopback: string[] }} parsed
+ * @returns {string | null}
+ */
+export function nativeKindMismatch(kind, { flags, android, loopback }) {
+  const given = (flag) =>
+    flag === '--android'
+      ? android.length > 0
+      : flag === '--loopback-path'
+        ? loopback.length > 0
+        : flags.has(flag);
+  const other = kind === 'desktop' ? 'mobile' : 'desktop';
+  const wrong = KIND_FLAGS[other].filter(given);
+  if (wrong.length === 0) return null;
+  return `A ${kind} client takes no ${wrong.join(', ')} (${other} clients only)`;
 }
 
 /** Split a comma list, empty entries dropped. */
@@ -118,10 +163,12 @@ function commaList(value) {
  * @param {Map<string, string | true>} flags
  * @param {string[]} android
  * @param {{ associations?: object }} [current] the client as it is (update only)
+ * @param {string[]} [loopback] the loopback paths given (`--loopback-path`)
  * @returns {{ ok: true, body: Record<string, unknown> } | { ok: false, error: string }}
  */
-export function nativeSettingsBody(flags, android, current = {}) {
+export function nativeSettingsBody(flags, android, current = {}, loopback = []) {
   const body = {};
+  if (loopback.length > 0) body.loopbackPaths = loopback;
   const fields = {};
   for (const [flag, field] of Object.entries(SETTINGS_FLAGS)) {
     if (flags.has(flag)) fields[field] = flags.get(flag);
@@ -212,6 +259,7 @@ export function nativeClientStateText(client) {
 export function nativeClientRows(client) {
   const rows = [
     ['name', client.name],
+    ['kind', client.kind === 'desktop' ? 'desktop (loopback redirects)' : 'mobile'],
     ['host', `${client.hostKind} ${client.fqdn ?? client.hostId}`],
     ['state', nativeClientStateText(client)],
     ['audience', client.audience ?? '—'],

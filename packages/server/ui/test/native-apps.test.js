@@ -14,7 +14,9 @@ import {
   associationsToForm,
   filterGrantsByPerson,
   grantEndText,
+  loopbackRedirectPreview,
   nativeClientIdOf,
+  nativeClientKindOf,
   nativeClientStatusText,
   nativeHostChoices,
   splitList,
@@ -111,4 +113,28 @@ test('grants filter by person', () => {
   assert.equal(filterGrantsByPerson(grants, '').length, 2);
   assert.deepEqual(filterGrantsByPerson(grants, 'ALI'), [grants[0]]);
   assert.deepEqual(filterGrantsByPerson(grants, 'bob'), [grants[1]]);
+});
+
+test('desktop clients: kinds, the loopback preview, and one host free per kind', () => {
+  assert.equal(nativeClientKindOf({ kind: 'desktop' }), 'desktop');
+  assert.equal(nativeClientKindOf({}), 'mobile');
+  assert.deepEqual(loopbackRedirectPreview(['/callback', 'nope', '/a/../b', '/x']), [
+    'http://127.0.0.1/callback',
+    'http://127.0.0.1/x',
+  ]);
+  const input = {
+    sites: [{ id: 's1', fqdn: 'shop.example.com', owner: { plugin: 'shop' } }],
+    clients: [{ hostKind: 'site', hostId: 's1' }],
+  };
+  // The site has a mobile client (one from before kinds): free for a desktop one only.
+  assert.deepEqual(nativeHostChoices(input), []);
+  assert.deepEqual(
+    nativeHostChoices({ ...input, clientKind: 'desktop' }).map((h) => h.id),
+    ['s1'],
+  );
+  const both = {
+    ...input,
+    clients: [...input.clients, { hostKind: 'site', hostId: 's1', kind: 'desktop' }],
+  };
+  assert.deepEqual(nativeHostChoices({ ...both, clientKind: 'desktop' }), []);
 });

@@ -140,8 +140,11 @@ export interface VerifyNativeAccessTokenOptions {
   readonly issuer: string;
   /** The host's audience (`nativeAudience(fqdn)`). */
   readonly audience: string;
-  /** The host's native client id. */
-  readonly clientId: string;
+  /**
+   * The host's native client id — or ids: a host has at most one client of
+   * each kind, and a token of either serves it.
+   */
+  readonly clientId: string | readonly string[];
   /** Now, in seconds since the epoch (default: the clock). */
   readonly now?: number | undefined;
 }
@@ -213,7 +216,9 @@ export function verifyNativeAccessToken(
   const audiences = typeof aud === 'string' ? [aud] : Array.isArray(aud) ? aud : null;
   if (!audiences || !audiences.includes(opts.audience)) return refuse('wrong_audience');
   const clientId = claims['client_id'];
-  if (!isNativeClientId(clientId) || clientId !== opts.clientId) return refuse('wrong_client');
+  const allowed: readonly string[] =
+    typeof opts.clientId === 'string' ? [opts.clientId] : opts.clientId;
+  if (!isNativeClientId(clientId) || !allowed.includes(clientId)) return refuse('wrong_client');
 
   const { exp, iat, nbf, jti } = claims;
   if (!isSeconds(exp) || !isSeconds(iat) || (nbf !== undefined && !isSeconds(nbf))) {

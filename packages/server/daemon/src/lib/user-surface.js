@@ -209,15 +209,15 @@ export const userSurfaceDeps = Object.freeze({
 });
 
 /**
- * Whether a native client is registered for the tunnel's host (any, served
- * or not): such a host is never made public (security review M1). Reads
- * state.db only — called under the tunnel lock.
+ * Whether a native client of any kind is registered for the tunnel's host
+ * (served or not): such a host is never made public (security review M1).
+ * Reads state.db only — called under the tunnel lock.
  *
  * @param {{ id: string }} tunnel
  */
 async function tunnelHasNativeClient(tunnel) {
-  const { nativeClientOfHost } = await import('./native-apps.js');
-  return (await nativeClientOfHost('tunnel', tunnel.id)) !== null;
+  const { nativeClientsOfHost } = await import('./native-apps.js');
+  return (await nativeClientsOfHost('tunnel', tunnel.id)).length > 0;
 }
 
 /**
