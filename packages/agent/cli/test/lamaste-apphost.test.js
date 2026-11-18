@@ -433,8 +433,15 @@ test('the service spec line is strict', () => {
     JSON.stringify(specLine({ systemPackages: ['sqlite3; rm -rf /'] })),
     JSON.stringify(specLine({ systemPackages: ['-o=Dpkg::Pre-Invoke=x'] })),
     JSON.stringify(specLine({ systemPackages: 'sqlite3' })),
+    // A key directory is named only as `true` (protocol 4).
+    JSON.stringify(specLine({ service: { entry: 'a.js', memoryMax: null, keysDir: false } })),
+    JSON.stringify(specLine({ service: { entry: 'a.js', memoryMax: null, keysDir: 'yes' } })),
+    JSON.stringify(specLine({ service: { entry: 'a.js', memoryMax: null, keysDir: null } })),
+    JSON.stringify(specLine({ service: { entry: 'a.js', keysDir: true } })),
   ];
   for (const text of bad) assert.throws(() => helper.parseSpecLine(text), helper.UsageError, text);
+  const keyed = specLine({ service: { entry: 'a.js', memoryMax: null, keysDir: true } });
+  assert.deepEqual(helper.parseSpecLine(JSON.stringify(keyed)), keyed);
 });
 
 test('a tarball that does not match its integrity is refused before anything is written', () => {
@@ -811,6 +818,89 @@ test('the unit: fixed template and hardening; its socket; no core dump; MemoryMa
     .split('\n');
   assert.ok(capped.includes('MemoryMax=512M'));
   assert.ok(capped.includes('ExecStart=/usr/bin/node /opt/lamalibre/apps/fx/current/package/a.js'));
+
+  // No key directory unless the spec asks for one; then it is named and writable too.
+  assert.ok(!plain.some((l) => l.includes('app-keys') || l.includes('LAMASTE_APP_KEYS_DIR')));
+  const keyed = helper
+    .renderUnit(ROUTE, specLine({ service: { entry: 'a.js', memoryMax: null, keysDir: true } }))
+    .split('\n');
+  assert.ok(keyed.includes('Environment=LAMASTE_APP_KEYS_DIR=/var/lib/lamalibre/app-keys/fx'));
+  assert.deepEqual(
+    keyed.filter((l) => l.startsWith('ReadWritePaths=')),
+    ['ReadWritePaths=/var/lib/lamalibre/apps/fx', 'ReadWritePaths=/var/lib/lamalibre/app-keys/fx'],
+  );
+  // Everything else is the unit without a key directory, line for line.
+  assert.deepEqual(
+    keyed.filter((l) => !l.includes('app-keys')),
+    helper.renderUnit(ROUTE, specLine({ service: { entry: 'a.js', memoryMax: null } })).split('\n'),
+  );
+});
+
+test('key directory: made with the half that asks for it, kept across versions and on remove, purged through its own trash', () => {
+  const { install, call, system, chowns, at } = setup();
+  const keys = at('var/lib/lamalibre/app-keys/fx');
+  const keyed = specLine({ service: { entry: 'dist/agentd.js', memoryMax: null, keysDir: true } });
+  const unitFile = at(`etc/systemd/system/${helper.unitName(ROUTE)}`);
+
+  // A half that does not ask gets none.
+  install('1.0.0', tgzOf(packageEntries()));
+  assert.ok(!fs.existsSync(keys));
+  assert.ok(!fs.existsSync(at('var/lib/lamalibre/app-keys')));
+  call(['config', LABEL, ROUTE], configInput());
+
+  // A version that asks: 0700, the account's, beside — not inside — the data directory.
+  install('1.1.0', tgzOf(packageEntries({ version: '1.1.0' })), { spec: keyed });
+  const account = system.users.get(helper.serviceUser(ROUTE));
+  assert.equal(mode(keys), '700');
+  assert.equal(mode(at('var/lib/lamalibre/app-keys')), '755');
+  assert.ok(
+    chowns.some(
+      ([p, u, g]) =>
+        p === 'var/lib/lamalibre/app-keys/fx' && u === account.uid && g === account.gid,
+    ),
+  );
+  assert.equal(fs.readFileSync(unitFile, 'utf8'), helper.renderUnit(ROUTE, keyed));
+  fs.writeFileSync(path.join(keys, 'link-key.json'), 'key');
+
+  // Activating the version without one restores its unit; the keys stay.
+  call(['activate', LABEL, ROUTE, '1.0.0']);
+  assert.ok(!fs.readFileSync(unitFile, 'utf8').includes('app-keys'));
+  assert.ok(fs.existsSync(path.join(keys, 'link-key.json')));
+  // Gone by hand, it is made again before a unit naming it is written.
+  fs.rmSync(keys, { recursive: true });
+  call(['activate', LABEL, ROUTE, '1.1.0']);
+  assert.equal(mode(keys), '700');
+  assert.equal(fs.readFileSync(unitFile, 'utf8'), helper.renderUnit(ROUTE, keyed));
+  fs.writeFileSync(path.join(keys, 'link-key.json'), 'key');
+
+  // Removed: kept with the data. Purged: through the key tree's own root-only trash.
+  call(['remove', LABEL, ROUTE]);
+  assert.ok(fs.existsSync(path.join(keys, 'link-key.json')));
+  call(['remove', LABEL, ROUTE, '--purge']);
+  assert.ok(!fs.existsSync(keys));
+  assert.ok(!fs.existsSync(at('var/lib/lamalibre/apps/fx')));
+  assert.equal(mode(at('var/lib/lamalibre/app-keys/.trash')), '700');
+  assert.deepEqual(fs.readdirSync(at('var/lib/lamalibre/app-keys/.trash')), []);
+  assert.deepEqual(fs.readdirSync(at('var/lib/lamalibre/app-keys')), ['.trash']);
+});
+
+test('key directory: an install that fails takes back the key directory it made', () => {
+  const { install, at } = setup();
+  fs.writeFileSync(at('etc/lamalibre/apps'), 'not a directory');
+  const keyed = specLine({ service: { entry: 'dist/agentd.js', memoryMax: null, keysDir: true } });
+  assert.throws(
+    () => install('1.0.0', tgzOf(packageEntries()), { spec: keyed }),
+    /not a root-owned directory/,
+  );
+  assert.ok(!fs.existsSync(at('var/lib/lamalibre/app-keys/fx')));
+});
+
+test('key directory without an owner record is not taken over', () => {
+  const { install, at } = setup();
+  fs.mkdirSync(at('var/lib/lamalibre/app-keys/fx'), { recursive: true });
+  fs.writeFileSync(at('var/lib/lamalibre/app-keys/fx/link-key.json'), 'key');
+  assert.throws(() => install('1.0.0', tgzOf(packageEntries())), /no owner record/);
+  assert.deepEqual(fs.readdirSync(at('var/lib/lamalibre/app-keys/fx')), ['link-key.json']);
 });
 
 test('config: written 0600 for the service account, never echoed, then the unit starts', () => {
@@ -2023,7 +2113,7 @@ test('contract: names and paths derived from a route equal the core library', ()
       route,
     );
     assert.equal(helper.unitName(route), core.appUnitName(route), route);
-    for (const key of ['codeDir', 'dataDir', 'configDir', 'configFile', 'ownerFile']) {
+    for (const key of ['codeDir', 'dataDir', 'keysDir', 'configDir', 'configFile', 'ownerFile']) {
       assert.equal(helper.PATHS[key](route), core.APPHOST_PATHS[key](route), `${key} ${route}`);
     }
     // The socket unit of the unit core names.
@@ -2169,24 +2259,29 @@ test('contract: what the helper accepts equals what the core schemas accept', ()
 });
 
 test('contract: the spec line the agent sends is one the helper accepts', () => {
-  const spec = core.AgentHalfSpecSchema.parse({
-    package: PKG,
-    version: '1.0.0',
-    integrity: `sha512-${Buffer.alloc(64, 7).toString('base64')}`,
-    service: { entry: 'dist/agentd.js', memoryMax: '512M' },
-    systemPackages: ['sqlite3'],
-  });
-  const line = JSON.stringify({
-    package: spec.package,
-    service: spec.service,
-    systemPackages: spec.systemPackages,
-  });
-  assert.deepEqual(helper.parseSpecLine(line), {
-    package: spec.package,
-    service: spec.service,
-    systemPackages: spec.systemPackages,
-  });
-  assert.ok(helper.INTEGRITY_RE.test(spec.integrity));
+  for (const service of [
+    { entry: 'dist/agentd.js', memoryMax: '512M' },
+    { entry: 'dist/agentd.js', memoryMax: '512M', keysDir: true },
+  ]) {
+    const spec = core.AgentHalfSpecSchema.parse({
+      package: PKG,
+      version: '1.0.0',
+      integrity: `sha512-${Buffer.alloc(64, 7).toString('base64')}`,
+      service,
+      systemPackages: ['sqlite3'],
+    });
+    const line = JSON.stringify({
+      package: spec.package,
+      service: core.agentHalfService(spec.service),
+      systemPackages: spec.systemPackages,
+    });
+    assert.deepEqual(helper.parseSpecLine(line), {
+      package: spec.package,
+      service,
+      systemPackages: spec.systemPackages,
+    });
+    assert.ok(helper.INTEGRITY_RE.test(spec.integrity));
+  }
 });
 
 test("contract: the helper's status parses with the core library's schema", () => {

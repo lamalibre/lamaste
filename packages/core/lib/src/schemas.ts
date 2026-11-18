@@ -385,6 +385,15 @@ export const AgentServiceSchema = z
     entry: AgentServiceEntrySchema,
     /** The unit's `MemoryMax=`; unset — no limit. */
     memoryMax: AgentServiceMemoryMaxSchema.optional(),
+    /**
+     * `true`: the agent half also gets a key directory
+     * (`APPHOST_PATHS.keysDir`, `LAMASTE_APP_KEYS_DIR`) — 0700, its
+     * account's, outside its data directory, for key material that must
+     * never be in the same backup as its data. Unset or `false`: none.
+     * Covered by the plugin's approval when `true`; needs an app host
+     * helper of protocol 4 (`APPHOST_KEYS_DIR_PROTOCOL_VERSION`).
+     */
+    keysDir: z.boolean().optional(),
   })
   .strict();
 

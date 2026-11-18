@@ -2255,6 +2255,12 @@ FIXTURE_EOF
 # tag's tree has (what the previous tree serves after an update), and
 # page-<tag>.html, a page no other tree has (what it never serves). Needs an
 # identity variant.
+# FIXTURE_KEYS_DIR=1 (environment; default unset) asks for a key directory
+# (agent.service.keysDir: true): the agent half then keeps
+# LAMASTE_APP_KEYS_DIR/link-key.json — {instance, key}, 0600, written at its
+# first start and kept after — and /admin/ping answers `keys` (the variable,
+# the instance id the key file names, the SHA-256 of its key), never the key.
+# Without it, `keys` is {dir: null, instance: null, keySha256: null}.
 # <build-id> goes into the agent package, so each run's tarballs — and their
 # integrity — are new: an agent's npm cache never answers for the registry.
 # Needs node, this workspace's node_modules (esbuild) and its core library
@@ -2275,6 +2281,15 @@ write_app_install_fixture() {
   fi
   local server_pkg="${scope}/${name}-server"
   local agent_pkg="${scope}/${name}-agent"
+  local keys_dir_entry=''
+  case "${FIXTURE_KEYS_DIR:-}" in
+    '') ;;
+    1) keys_dir_entry=', "keysDir": true' ;;
+    *)
+      echo "write_app_install_fixture: FIXTURE_KEYS_DIR is 1 or unset" >&2
+      return 2
+      ;;
+  esac
   local here deps='' settings_entry='' identity_entry='' web_entry='' server_files='"index.js", "lamaste-plugin.json"'
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   case "$mode" in
@@ -2366,7 +2381,7 @@ FIXTURE_EOF
   "agent": {
     "requires": { "node": ">=22", "os": ["linux"], "systemPackages": ${system_packages} },
     "package": "${agent_pkg}",
-    "service": { "entry": "dist/agentd.mjs", "memoryMax": "256M" }
+    "service": { "entry": "dist/agentd.mjs", "memoryMax": "256M"${keys_dir_entry} }
   },
   "modes": ["server"],
   "packages": { "server": "${server_pkg}" },
@@ -2482,6 +2497,26 @@ const state = {
   startedAt: new Date().toISOString(),
 };
 writeFileAtomic(statePath, `${JSON.stringify(state)}\n`);
+
+// A key directory, when the manifest asks for one: link-key.json is written
+// at the first start and kept after — as a key that must outlive versions
+// and never be in the data directory's backup.
+const keysDir = process.env.LAMASTE_APP_KEYS_DIR ?? null;
+let keyFile = null;
+if (keysDir !== null) {
+  const keyPath = path.join(keysDir, 'link-key.json');
+  try {
+    keyFile = JSON.parse(readFileSync(keyPath, 'utf8'));
+  } catch {
+    keyFile = { instance: state.instance, key: crypto.randomBytes(32).toString('hex') };
+    writeFileAtomic(keyPath, `${JSON.stringify(keyFile)}\n`);
+  }
+}
+const keysInfo = {
+  dir: keysDir,
+  instance: keyFile?.instance ?? null,
+  keySha256: keyFile ? crypto.createHash('sha256').update(keyFile.key).digest('hex') : null,
+};
 
 const verifier = createCallerAssertionVerifier({ configPath, plugin: ROUTE, reloadIntervalMs: 1000 });
 const PORT = await verifier.port();
@@ -2688,6 +2723,8 @@ async function sandboxProbe() {
     capBnd: procStatus('CapBnd'),
     writes: {
       dataDir: tryWrite(path.join(dataDir, probe)),
+      keysDir: keysDir === null ? 'UNSET' : tryWrite(path.join(keysDir, probe)),
+      keysTree: tryWrite(`/var/lib/lamalibre/app-keys/${probe}`),
       privateTmp: tryWrite(`/tmp/e2e-${ROUTE}-private-tmp`, true),
       privateVarTmp: tryWrite(`/var/tmp/e2e-${ROUTE}-private-var-tmp`, true),
       privateShm: tryWrite(`/dev/shm/e2e-${ROUTE}-private-shm`, true),
@@ -2841,6 +2878,7 @@ const server = http.createServer(async (req, res) => {
         user: USER,
         pid: process.pid,
         data: { instance: state.instance, starts: state.starts, versions: state.versions },
+        keys: keysInfo,
         // How it listens: systemd's socket (descriptor 3) under the unit
         // lamaste-apphost writes; systemd's variables gone from its
         // environment once read, so nothing it starts takes the socket.

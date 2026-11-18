@@ -89,7 +89,8 @@ function RetainedDataRow({ record, isActing }) {
           <p className="flex items-start gap-1 text-red-400">
             <AlertTriangle size={11} className="mt-0.5 shrink-0" />
             <span>
-              Delete <span className="font-mono">{record.dataDir}</span> and the account{' '}
+              Delete <span className="font-mono">{record.dataDir}</span>, its key directory{' '}
+              <span className="font-mono">{record.keysDir}</span> if it has one, and the account{' '}
               <span className="font-mono">{record.serviceUser}</span> on agent{' '}
               <span className="font-mono">{record.agentLabel}</span> (route{' '}
               <span className="font-mono">{record.route}</span>)? The agent&apos;s app host helper

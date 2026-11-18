@@ -1,7 +1,7 @@
 #!/usr/bin/node
 /**
  * lamaste-apphost — the root half of a Lamaste agent that hosts the agent
- * halves of agent-hosted plugins (protocol 3).
+ * halves of agent-hosted plugins (protocol 4).
  *
  * The agent runs as an unprivileged user. Installing an agent half needs
  * root — a system account, a system unit, directories under /opt, /var/lib
@@ -23,8 +23,8 @@
  *                                  agent half at a kept version
  *   remove <label> <route> [--purge]
  *                                  stdin: the relay's signature; remove it;
- *                                  --purge also its data, its account and its
- *                                  owner record
+ *                                  --purge also its data, its key directory,
+ *                                  its account and its owner record
  *   status [<route>]               the protocol, the Node.js this helper (and so
  *                                  every agent half) runs on, and per agent
  *                                  half: versions, unit and socket state,
@@ -102,7 +102,7 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Names, paths and patterns (identical to @lamalibre/lamaste)
@@ -134,6 +134,13 @@ const APPS_CONFIG = '/etc/lamalibre/apps';
 const OWNERS_DIR = `${APPS_DATA}/.owners`;
 /** Purged data waits here (root 0700) while it is deleted, out of its account's reach. */
 const TRASH_DIR = `${APPS_DATA}/.trash`;
+/**
+ * Key directories (protocol 4): a sibling tree of the data directories, so
+ * an operator backs up one without the other. Its own trash, so a purge is
+ * a rename even when the two trees are on different file systems.
+ */
+const APPS_KEYS = '/var/lib/lamalibre/app-keys';
+const KEYS_TRASH_DIR = `${APPS_KEYS}/.trash`;
 /** The relay keys, one per agent label (root 0755; files root 0644). */
 const APPHOST_ETC = '/etc/lamalibre/apphost';
 const RELAYS_DIR = `${APPHOST_ETC}/relays`;
@@ -147,6 +154,7 @@ const PATHS = Object.freeze({
   sudoers: '/etc/sudoers.d/lamaste-apphost',
   codeDir: (route) => `${APPS_CODE}/${route}`,
   dataDir: (route) => `${APPS_DATA}/${route}`,
+  keysDir: (route) => `${APPS_KEYS}/${route}`,
   configDir: (route) => `${APPS_CONFIG}/${route}`,
   configFile: (route) => `${APPS_CONFIG}/${route}/plugin-config.json`,
   ownerFile: (route) => `${OWNERS_DIR}/${route}.json`,
@@ -335,10 +343,19 @@ function parseSpec(raw) {
   if (typeof pkg !== 'string' || pkg.length > PACKAGE_MAX || !PACKAGE_RE.test(pkg)) {
     throw new UsageError('the service spec names an invalid package');
   }
-  if (!isRecord(service) || !hasExactly(service, ['entry', 'memoryMax'])) {
+  // `keysDir` is present only as `true` (protocol 4): a spec without it is
+  // the spec of a half without a key directory, exactly as before.
+  if (
+    !isRecord(service) ||
+    !(
+      hasExactly(service, ['entry', 'memoryMax']) ||
+      (hasExactly(service, ['entry', 'memoryMax', 'keysDir']) && service.keysDir === true)
+    )
+  ) {
     throw new UsageError('the service spec has an invalid service');
   }
   const { entry, memoryMax } = service;
+  const keysDir = service.keysDir === true;
   if (typeof entry !== 'string' || entry.length > ENTRY_MAX || !ENTRY_RE.test(entry)) {
     throw new UsageError('the service entry is not a relative .js, .mjs or .cjs path');
   }
@@ -356,7 +373,7 @@ function parseSpec(raw) {
   }
   return {
     package: pkg,
-    service: { entry, memoryMax },
+    service: keysDir ? { entry, memoryMax, keysDir: true } : { entry, memoryMax },
     systemPackages: [...new Set(systemPackages)].sort(),
   };
 }
@@ -1592,9 +1609,23 @@ function deleteServiceAccount(ctx, route) {
 
 /** /var/lib/lamalibre/apps/<route>: 0700, owned by the account; kept across versions. */
 function ensureDataDir(ctx, route, account) {
+  return ensureAccountDir(ctx, APPS_DATA, PATHS.dataDir(route), account);
+}
+
+/**
+ * /var/lib/lamalibre/app-keys/<route>: 0700, owned by the account; kept
+ * across versions — and across versions that no longer ask for it, until a
+ * purge: a key is data too.
+ */
+function ensureKeysDir(ctx, route, account) {
+  return ensureAccountDir(ctx, APPS_KEYS, PATHS.keysDir(route), account);
+}
+
+/** `dir` under the root-owned `parent`: 0700, owned by the account. Whether this created it. */
+function ensureAccountDir(ctx, parent, name, account) {
   ensureRootDirectory(ctx, at(ctx, '/var/lib/lamalibre'));
-  ensureRootDirectory(ctx, at(ctx, APPS_DATA));
-  const dir = at(ctx, PATHS.dataDir(route));
+  ensureRootDirectory(ctx, at(ctx, parent));
+  const dir = at(ctx, name);
   let created = true;
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
@@ -1603,7 +1634,7 @@ function ensureDataDir(ctx, route, account) {
     created = false;
   }
   if (!fs.lstatSync(dir).isDirectory()) {
-    throw new Error(`${PATHS.dataDir(route)} is not a directory`);
+    throw new Error(`${name} is not a directory`);
   }
   // Only the directory itself: a recursive chown as root could be steered
   // by links the agent half created inside it.
@@ -1638,11 +1669,20 @@ function ensureConfigDir(ctx, route, account) {
  * out of the account's reach, then deleted there.
  */
 function purgeDataDir(ctx, route) {
-  const dir = at(ctx, PATHS.dataDir(route));
+  purgeAccountDir(ctx, route, PATHS.dataDir(route), TRASH_DIR);
+}
+
+/** Purge the key directory, the same way, through the key tree's own trash. */
+function purgeKeysDir(ctx, route) {
+  purgeAccountDir(ctx, route, PATHS.keysDir(route), KEYS_TRASH_DIR);
+}
+
+function purgeAccountDir(ctx, route, name, trashDir) {
+  const dir = at(ctx, name);
   const st = lstatOrNull(dir);
   if (st === null) return;
-  if (!st.isDirectory()) throw new Error(`${PATHS.dataDir(route)} is not a directory`);
-  const trash = at(ctx, TRASH_DIR);
+  if (!st.isDirectory()) throw new Error(`${name} is not a directory`);
+  const trash = at(ctx, trashDir);
   ensureRootDirectory(ctx, trash, 0o700);
   fs.chmodSync(trash, 0o700);
   const trashed = path.join(trash, `${route}-${crypto.randomBytes(8).toString('hex')}`);
@@ -1730,6 +1770,11 @@ function ensureSystemPackages(ctx, packages) {
 function renderUnit(route, spec) {
   const user = serviceUser(route);
   const dataDir = PATHS.dataDir(route);
+  // A key directory, when the half asks for one: given to it by name, and
+  // writable like its data directory (one more ReadWritePaths= line — they
+  // add up). It must exist before the unit starts: systemd refuses to
+  // start a unit whose ReadWritePaths= names a missing path.
+  const keysDir = spec.service.keysDir === true ? PATHS.keysDir(route) : null;
   const socket = socketName(route);
   return [
     `# Managed by lamaste-apphost: the agent half of Lamaste app plugin ${route}.`,
@@ -1749,6 +1794,7 @@ function renderUnit(route, spec) {
     `ExecStart=${NODE_BIN} ${PATHS.codeDir(route)}/current/package/${spec.service.entry}`,
     `Environment=LAMASTE_APP_CONFIG=${PATHS.configFile(route)}`,
     `Environment=LAMASTE_APP_DATA_DIR=${dataDir}`,
+    ...(keysDir !== null ? [`Environment=LAMASTE_APP_KEYS_DIR=${keysDir}`] : []),
     'Environment=NODE_ENV=production',
     `WorkingDirectory=${dataDir}`,
     'Restart=always',
@@ -1756,6 +1802,7 @@ function renderUnit(route, spec) {
     'NoNewPrivileges=yes',
     'ProtectSystem=strict',
     `ReadWritePaths=${dataDir}`,
+    ...(keysDir !== null ? [`ReadWritePaths=${keysDir}`] : []),
     // ProtectSystem=strict leaves /run writable, and /run/lock is 1777:
     // nothing of the agent half's belongs there.
     'ReadOnlyPaths=/run',
@@ -2161,11 +2208,16 @@ function installLocked(ctx, { label, route, version, spec, tar, archive }) {
   // Whose route it is, before anything is written.
   const owner = assertOwner(ctx, route, label, spec.package);
   const fresh = installedVersions(ctx, route).length === 0;
-  if (owner === null && (lstatOrNull(at(ctx, PATHS.dataDir(route))) !== null || !fresh)) {
+  if (
+    owner === null &&
+    (lstatOrNull(at(ctx, PATHS.dataDir(route))) !== null ||
+      lstatOrNull(at(ctx, PATHS.keysDir(route))) !== null ||
+      !fresh)
+  ) {
     throw new NotOwnerError(
-      `${route} has data or code on this machine but no owner record; it is not taken over — ` +
-        `remove ${PATHS.dataDir(route)} and ${PATHS.codeDir(route)} by hand if they are no ` +
-        'longer needed',
+      `${route} has data, keys or code on this machine but no owner record; it is not taken ` +
+        `over — remove ${PATHS.dataDir(route)}, ${PATHS.keysDir(route)} and ` +
+        `${PATHS.codeDir(route)} by hand if they are no longer needed`,
     );
   }
   if (fresh && installedRoutes(ctx).length >= ROUTES_MAX) {
@@ -2189,7 +2241,13 @@ function installLocked(ctx, { label, route, version, spec, tar, archive }) {
   const staging = at(ctx, `${APPS_CODE}/.stage-${crypto.randomBytes(8).toString('hex')}-${route}`);
   fs.mkdirSync(staging, { mode: 0o700 });
   // What this run created, undone when it fails before the code is in place.
-  const created = { account: false, owner: false, dataDir: false, configDir: false };
+  const created = {
+    account: false,
+    owner: false,
+    dataDir: false,
+    keysDir: false,
+    configDir: false,
+  };
   let placed = false;
   try {
     extractEntries(tar, archive.entries, staging);
@@ -2209,6 +2267,7 @@ function installLocked(ctx, { label, route, version, spec, tar, archive }) {
       created.owner = true;
     }
     created.dataDir = ensureDataDir(ctx, route, account);
+    if (spec.service.keysDir === true) created.keysDir = ensureKeysDir(ctx, route, account);
     created.configDir = ensureConfigDir(ctx, route, account);
 
     fs.chmodSync(staging, 0o755);
@@ -2275,18 +2334,32 @@ function rollBackInstall(ctx, route, { version, before, created }) {
   }
   if (before === version) return; // the same version again: nothing else ran before
   const spec = readVersionSpec(ctx, route, before);
-  if (spec !== null)
+  if (spec !== null) {
+    attempt(() => ensureVersionKeysDir(ctx, route, spec));
     attempt(() => atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644));
+  }
   attempt(() => replaceSymlink(path.join(codeDir, 'current'), before));
   attempt(() => replaceSymlink(path.join(codeDir, 'previous'), version));
   attempt(() => systemctl(ctx, ['daemon-reload'], { allowFailure: true }));
   attempt(() => startWhenConfigured(ctx, route, { restart: true }));
 }
 
+/**
+ * The key directory a kept version's unit names, made again if it is gone
+ * (an operator deleted it by hand): its unit could not start without it.
+ */
+function ensureVersionKeysDir(ctx, route, spec) {
+  if (spec.service.keysDir !== true) return;
+  const account = serviceAccount(ctx, route);
+  if (account === null) throw new NotInstalledError(`the account of ${route} is missing`);
+  ensureKeysDir(ctx, route, account);
+}
+
 /** Best effort: take back what a failed install created (it never held data). */
 function undoCreated(ctx, route, created) {
   if (created.configDir) attempt(() => removeTree(ctx, at(ctx, PATHS.configDir(route))));
   if (created.dataDir) attempt(() => fs.rmdirSync(at(ctx, PATHS.dataDir(route))));
+  if (created.keysDir) attempt(() => fs.rmdirSync(at(ctx, PATHS.keysDir(route))));
   if (created.owner) attempt(() => fs.rmSync(at(ctx, PATHS.ownerFile(route)), { force: true }));
   if (created.account) attempt(() => deleteServiceAccount(ctx, route));
 }
@@ -2366,6 +2439,7 @@ function activate(ctx, args) {
       throw new NotInstalledError(`the account of ${route} is missing; install it again`);
     }
     recordJob(ctx, envelope, now);
+    ensureVersionKeysDir(ctx, route, spec);
     atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644);
     switchCurrent(ctx, route, version);
     pruneVersions(ctx, route);
@@ -2421,6 +2495,7 @@ function remove(ctx, args) {
     removeTree(ctx, at(ctx, PATHS.configDir(route)));
     if (purge) {
       purgeDataDir(ctx, route);
+      purgeKeysDir(ctx, route);
       deleteServiceAccount(ctx, route);
       fs.rmSync(at(ctx, PATHS.ownerFile(route)), { force: true });
     }
