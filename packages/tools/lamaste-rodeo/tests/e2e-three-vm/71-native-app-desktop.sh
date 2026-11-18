@@ -230,13 +230,14 @@ desktop_sign_in() {
 }
 
 # refused_at_authorization <redirect uri> — Authelia sends no code there:
-# its Location is not that URI (an error on the portal, or none)
+# its Location is not that URI and carries no code parameter (an error on
+# the portal, whose query has error_status_code, or none)
 refused_at_authorization() {
   local loc
   pkce_pair
   loc=$(desktop_authorize "${CLIENT_DESK}" "$1" "$(openssl rand -hex 12)")
-  if [[ "$loc" == "$1"* ]] || [[ "$loc" == *"code="* ]]; then
-    log_info "Authorization for $1 answered: ${loc%%code=*}" >&2
+  if [[ "$loc" == "$1"* ]] || [ -n "$(url_param "$loc" code)" ]; then
+    log_info "Authorization for $1 delivered a code to ${loc%%\?*}" >&2
     return 1
   fi
 }
