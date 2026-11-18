@@ -126,8 +126,10 @@ The request flow for a restricted tunnel:
    must agree), takes the visitor's authelia_session cookie — refusing a
    request with more than one — and validates it with Authelia for that
    URL, sending Authelia that cookie alone:
-   a. No valid session -> 401 -> nginx redirects to
-      auth.example.com/?rd=https://staging.example.com<request URI>
+   a. No valid session -> 401 -> nginx sends the request to its sign-in
+      location, and Gatekeeper's /authz/sign-in/example.com/staging.example.com
+      redirects to auth.example.com/?rd=<https://staging.example.com<request
+      URI>, encoded> (Authelia itself is asked about the URL without its query)
    b. Valid session -> the user (cached per session and host, see Session caching)
 4. Gatekeeper checks for a matching grant:
    a. Grant exists (user or group match) -> 200 with Remote-User, Remote-Groups,

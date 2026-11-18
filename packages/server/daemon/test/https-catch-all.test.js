@@ -132,3 +132,18 @@ test('restored after a restart: the audit log says it was missing', async () => 
   await lib.checkHttpsCatchAll(undefined, { enabledPath: site, now: t0 + 2000 });
   assert.equal((await audits('relay.https-catch-all.restored')).length, before + 1);
 });
+
+test('a restart while still missing tells nobody again', async () => {
+  const t0 = Date.now();
+  // Something else first, so this breakage starts fresh.
+  await writeFile(site, renderHttpsCatchAllVhost().replace('return 444;', 'return 400;'));
+  await lib.checkHttpsCatchAll(undefined, { enabledPath: site, now: t0 });
+  await rm(site, { force: true });
+  await lib.checkHttpsCatchAll(undefined, { enabledPath: site, now: t0 + 1000 });
+  const told = (await catchAllNotifications()).length;
+  lib.resetHttpsCatchAllCheck();
+  await lib.checkHttpsCatchAll(undefined, { enabledPath: site, now: t0 + 2000 });
+  assert.equal((await catchAllNotifications()).length, told, 'same breakage after a restart');
+  const audited = await audits('relay.https-catch-all.missing');
+  assert.match(audited[0].details.noticeKey, /^[0-9a-f]{32}$/);
+});

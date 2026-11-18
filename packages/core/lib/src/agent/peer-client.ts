@@ -945,8 +945,11 @@ export function createPeers(opts: PeersOptions): Peers {
       try {
         listener(snapshot);
       } catch (err: unknown) {
+        // The listener is the application's code: its error's message may
+        // carry anything, so only the error's class is logged — never the
+        // message (a logger may print a string field as it stands).
         logger?.warn(
-          { err: err instanceof Error ? err.message : String(err) },
+          { plugin: opts.plugin, error: err instanceof Error ? err.name : typeof err },
           'An edges listener failed',
         );
       }

@@ -532,7 +532,7 @@ If provisioning then fails writing Authelia's configuration with `/etc/authelia 
 
 ## Tunnel, Site or Panel Change Fails: "nginx site write failed"
 
-**Symptom:** Creating or changing a tunnel, static site or agent panel fails with an error like `nginx site write failed for lamalibre-lamaste-app-myapp: lamaste-priv: vhost line 12: directive "access_log" is not allowed in server` (or `arguments of "..." are not allowed`, `site name not allowed for write: ...`).
+**Symptom:** Creating or changing a tunnel, static site or agent panel fails with an error like `nginx site write failed for lamalibre-lamaste-app-myapp: lamaste-priv: vhost line 12: directive "proxy_cache" is not allowed in location` (or `arguments of "..." are not allowed`, `site name not allowed for write: ...`).
 
 **Cause:** The panel installs vhosts only through the root helper `/usr/local/sbin/lamaste-priv`, which accepts only the panel's own site names and only directives on its allow-list (nginx's master process runs as root, so an unchecked vhost would be root access). The previous vhost is left in place. This happens when the panel generates something the installed helper does not know — typically a panel upgraded without re-running the installer, or a helper left over from an older version — or when a hand-edited generator adds a directive.
 
@@ -542,6 +542,16 @@ If provisioning then fails writing Authelia's configuration with `/etc/authelia 
 2. If it persists on a current install, it is a bug: the vhost generators (`packages/server/daemon/src/lib/nginx.js`) and the allow-list (`packages/provisioners/server/scripts/lamaste-priv`) must change together — `npm test` checks every generated vhost against the allow-list. Do not work around it by editing files in `/etc/nginx` by hand.
 
 `sudo: a password is required` for `lamaste-priv` means the helper or the sudoers file is missing or outdated: re-run the installer.
+
+---
+
+## nginx Refuses Vhosts: Unknown Log Format or Variable
+
+**Symptom:** A tunnel, site or panel change fails, or the panel's startup log reports `Failed to rewrite … vhost`, with nginx's test saying `unknown log format "lamaste_noquery"` or `unknown "lamaste_request_path" variable`.
+
+**Cause:** Every vhost the relay writes logs in the format `lamaste_noquery` (the path of a request, never its query), and the locations that ask Authelia directly name `$lamaste_request_path`. Both are defined by the installer's http-level file `/etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf`; without it nginx refuses those vhosts, and the panel restores the previous ones. The file is missing when a panel was updated without the installer, or when it was removed by hand.
+
+**Fix:** Re-run the installer, which installs the file before anything else changes: `npx --yes --@lamalibre:registry=https://feria.codelama.com.tr/ @lamalibre/create-lamaste --yes`, then restart `lamalibre-lamaste-serverd` so its startup reconcile rewrites the vhosts it left as they were.
 
 ---
 

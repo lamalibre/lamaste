@@ -208,6 +208,13 @@ async function startProvider() {
   return { server, port, secret, db, dbPath, outbox };
 }
 
+/** Every line the consumers' SDK logs: no message of an error may reach it. */
+const logLines = [];
+const captureLogger = {
+  info: (obj, msg) => logLines.push({ level: 'info', obj, msg }),
+  warn: (obj, msg) => logLines.push({ level: 'warn', obj, msg }),
+};
+
 async function startConsumer(opts = {}) {
   const secret = opts.secret ?? generateHostingSecret();
   const files = opts.files ?? 'leave';
@@ -225,6 +232,7 @@ async function startConsumer(opts = {}) {
     configPath,
     plugin: 'leave',
     db,
+    logger: captureLogger,
     eventsWaitMs: 300,
     attachWaitMs: 3000,
     ...(opts.peers ?? {}),
@@ -1166,6 +1174,40 @@ test('a change wakes the held read at once; listeners get the new list', async (
   assert.equal(edgesState.reads, reads + 1, 'the relay looked again');
   assert.equal(consumer.peers.edges().confirmedAt, confirmed, 'and answered nothing');
   assert.equal(seen.length, before);
+  off();
+});
+
+test("a listener that throws is logged by its error's class, never its message", async () => {
+  const secretText = 'listener-secret-7f3a';
+  const before = logLines.length;
+  const seen = [];
+  const offThrowing = consumer.peers.onEdgesChanged(() => {
+    throw new TypeError(`a message carrying ${secretText}`);
+  });
+  const off = consumer.peers.onEdgesChanged((s) => seen.push(s));
+  const original = edgesState.list;
+  await waitFor(() => edgesState.listeners.size > 0);
+  edgesState.list = original.map((e) => ({
+    ...e,
+    effective: false,
+    reason: 'consumer_disabled',
+    events: [],
+  }));
+  edgesChanged();
+  await waitFor(() => seen.length > 0, 3000);
+  const line = await waitFor(() =>
+    logLines.slice(before).find((l) => l.msg === 'An edges listener failed'),
+  );
+  assert.equal(line.level, 'warn');
+  assert.deepEqual(line.obj, { plugin: 'leave', error: 'TypeError' });
+  assert.ok(!JSON.stringify(logLines).includes(secretText), 'the message is never logged');
+
+  // Back to the list the next tests expect; the other listener still ran.
+  offThrowing();
+  await waitFor(() => edgesState.listeners.size > 0);
+  edgesState.list = original;
+  edgesChanged();
+  await waitFor(() => seen.length > 1, 3000);
   off();
 });
 

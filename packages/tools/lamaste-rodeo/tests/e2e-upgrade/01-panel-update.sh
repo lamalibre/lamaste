@@ -54,6 +54,10 @@
 #    relay's domain, fails the TLS handshake (before: answered with another
 #    site's certificate, unless the previous release had it already); the
 #    auth portal and the enabled tunnel still complete theirs.
+# 8. Query strings (4.14.2): the update installs the http-level file that
+#    defines lamaste_noquery and rewrites the vhosts the previous release
+#    wrote, so every enabled Lamaste server block logs the path without its
+#    query; the panel reports the guarantee in place.
 # ============================================================================
 
 set -euo pipefail
@@ -292,6 +296,21 @@ certs_sent() {
 CATCH_ALL_BEFORE=$(sudo test -L /etc/nginx/sites-enabled/lamalibre-lamaste-https-default && echo yes || echo no)
 UNKNOWN_CERTS_BEFORE=$(certs_sent "${UNKNOWN_NAME}")
 log_info "Before the update: catch-all ${CATCH_ALL_BEFORE}; ${UNKNOWN_NAME} got ${UNKNOWN_CERTS_BEFORE} certificate(s)"
+
+# How many enabled Lamaste vhosts logged queries before the update (8.):
+# one whose server blocks outnumber its lamaste_noquery access_log lines.
+vhosts_logging_queries() {
+  local f n d out=""
+  for f in /etc/nginx/sites-enabled/lamalibre-lamaste-*; do
+    [ -e "$f" ] || continue
+    n=$(sudo grep -cE '^[[:space:]]*server[[:space:]]*\{' "$f" || true)
+    d=$(sudo grep -cxE '[[:space:]]*access_log /var/log/nginx/access\.log lamaste_noquery;' "$f" || true)
+    [ "${n:-0}" = "${d:-0}" ] || out="${out} $(basename "$f")"
+  done
+  echo "${out# }"
+}
+QUERY_VHOSTS_BEFORE=$(vhosts_logging_queries)
+log_info "Before the update, vhosts logging queries: ${QUERY_VHOSTS_BEFORE:-none}"
 
 log_section "POST /api/system/update to ${CANDIDATE}"
 
@@ -575,6 +594,28 @@ assert_eq "$(certs_sent -)" "0" "No SNI: no certificate" || true
 assert_eq "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/api/health" 2>/dev/null || echo 000)" "200" "${AUTH_FQDN}/api/health still answers 200" || true
 ON_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ON_FQDN}:443:127.0.0.1" "https://${ON_FQDN}/" 2>/dev/null || true)
 assert_not_eq "${ON_STATUS:-000}" "000" "The enabled tunnel ${ON_FQDN} still completes its handshake (${ON_STATUS})" || true
+
+# ===========================================================================
+# 8. Query strings (4.14.2)
+# ===========================================================================
+
+log_section "Every enabled vhost logs the path without its query"
+
+assert_not_eq "${QUERY_VHOSTS_BEFORE}" "" "Before the update, the previous release's vhosts logged queries (${QUERY_VHOSTS_BEFORE})" || true
+assert_contains "$(sudo cat /etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf 2>/dev/null || echo "")" "log_format lamaste_noquery" "The update installed the http-level file defining lamaste_noquery" || true
+assert_eq "$(vhosts_logging_queries)" "" "No enabled lamalibre-lamaste-* vhost logs queries any more" || true
+PROBE="probe${RANDOM}${RANDOM}"
+curl -sk -o /dev/null --max-time 10 --resolve "${AUTH_FQDN}:443:127.0.0.1" "https://${AUTH_FQDN}/api/health?${PROBE}=1&x=2" 2>/dev/null || true
+sleep 1
+assert_eq "$(sudo grep -c "${PROBE}" /var/log/nginx/access.log 2>/dev/null || true)" "0" "A request's query is not in nginx's access log" || true
+assert_contains "$(sudo tail -n 50 /var/log/nginx/access.log 2>/dev/null || echo "")" '"GET /api/health HTTP/' "…its path is" || true
+PRIVACY_STATUS=""
+for _ in $(seq 1 30); do
+  PRIVACY_STATUS=$(api_get "system/stats" 2>/dev/null | jq -r '.requestPrivacy.status // empty' 2>/dev/null || true)
+  [ "${PRIVACY_STATUS}" = "in-place" ] && break
+  sleep 2
+done
+assert_eq "${PRIVACY_STATUS}" "in-place" "The panel reports the guarantee in place" || true
 
 log_section "The panel logged no error since the update"
 

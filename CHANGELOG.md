@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.14.3] - 2026-11-18
+
+Run on rodeo 2026-11-17/18 on fresh VMs, the candidate on a development Feria only: upgrade `01` from the released 4.14.2 tarballs 122 of 122, three-VM 69 of 69 (3847 assertions, spec 20's old skip), single-VM 43 of 43 (2133, the 5 old one-VM skips).
+
+### Security
+
+- **nginx no longer logs query strings.** Every server block the relay renders now carries `access_log /var/log/nginx/access.log lamaste_noquery;`, replacing Ubuntu's http-level `combined` log for it: the same file and the same line shape, but the request's path without its query, no referrer and no client-chosen Basic username. A plugin that carries an identifier, a search or a single-use code in a query no longer has it kept for two weeks. The format and a `$lamaste_request_path` variable come from a new http-level file the installer writes, `/etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf` (root, 0644, `nginx -t` with rollback) — on a fresh install before the first vhost, on a redeploy before the panel stops. `lamaste-priv` accepts that one `access_log` at server level, `off` in a location, never `log_format`, and refuses any vhost that sets a `$lamaste_` variable (a `map` target, an `auth_request_set`, a named regex capture).
+- **Authelia is no longer asked about query strings.** Authelia logs the URL of every refusal of a signed-in user to its log file. The locations that ask it directly (protected static sites, the sign-in host's change-password page, the desktop's `/api/user-access/authorize`) and Gatekeeper now send it the URL without its query; Gatekeeper keeps the whole URL for its own checks.
+- **One sign-in redirect, query intact.** Every page without a session — tunnels, web-surface shells, protected static sites, the portal's change-password page, the desktop's authorize — now goes to Gatekeeper's new `/authz/sign-in/<domain>/<host>`, which redirects to the domain's sign-in with the whole URL percent-encoded as `rd`. Before, tunnels and web surfaces wrote `rd` unencoded, so an `&` in the query was lost on return. A user surface's API keeps its JSON `401`.
+- **Gatekeeper is now required for signing in.** The sign-in redirect of protected static sites, of the auth portal's change-password page and `/api/user-access/authorize`, of tunnels and of web-surface shells is Gatekeeper's: while it is down, a visitor without a session gets nginx's `502` there instead of the sign-in page (tunnels and shells already needed it to authorize). The redeploy therefore starts Gatekeeper whenever it installs it, not only when it was running before — before the panel, best effort, never in the way of the panel's restart — and its last step proves Gatekeeper ready by its health endpoint. A Gatekeeper that is masked, will not start or does not answer fails that step with a clear message (the panel keeps running); one disabled at boot is started and reported.
+
+### Added
+
+- **The panel says when queries may still be logged.** After its start-up reconcile and every 10 minutes the panel checks the installer's file and every enabled `lamalibre-lamaste-*` vhost; a missing or changed file, or a vhost without the relay's access log, is audited (`relay.request-privacy.degraded`, naming the vhosts) and notified to the administrators, again when it changes and daily while it lasts; its return is audited. `GET /api/system/stats` carries its status as `requestPrivacy` (`status`, `checkedAt` — never the vhosts' names: agent certificates with `system:read` read that route). A restart while nothing changed tells nobody again: each audit carries a `noticeKey`, and the HTTPS catch-all's notice works the same way. The reconcile's log line marks each vhost it left as it was that keeps the combined log (`logsQueries`).
+
+### Changed
+
+- **What the upgrade rewrites.** The panel's start rewrites each vhost it manages that it can render from its state (chisel's `tunnel.<domain>` vhost is now among them — before, it was written only at onboarding), and the redeploy refreshes the installer's own sites (IP panel, port-80 redirect, 443 catch-all). A vhost the reconcile leaves as it is, an orphan or a failed refresh keeps the combined log, and the notice above names it.
+- **Logs written before the update are not scrubbed.** Existing lines of `/var/log/nginx/access.log` and its rotations keep their queries and referrers until logrotate drops them (Ubuntu's default: about 14 days); remove `/var/log/nginx/access.log.*` by hand to be rid of them sooner.
+- **Residual:** nginx's error log has no format. It still records the request line, query included, and the referrer on an upstream error (a tunnel down, a backend that does not answer) and on a request `limit_req` rejects — including the desktop's `/api/user-access/authorize?challenge=…&nonce=…`. Documented in the security model; the error log's level is unchanged.
+
+### Fixed
+
+- **The peers SDK never logs an application error's message.** When a listener given to `peers.onEdgesChanged` threw, `createPeers` logged the error's message as a string field, which a process logger that redacts only `Error` objects prints as it stands. It now logs the plugin and the error's class (`{ plugin, error: 'TypeError' }`), as every other line of the SDK and of `peerRoute` already did (checked: none other logs a message). Test: core `peer-channel.test.js` (a throwing listener's message reaches no log line).
+
 ## [4.14.2] - 2026-11-17
 
 Run on rodeo 2026-11-16 on fresh VMs, the candidate on a development Feria only: three-VM 01 (55), 58 (52), 60 (41), 61 (35) passed; 59 failed 4 of 44 once (a call on a user's behalf found the consumer's channel not attached yet) and passed 44 of 44 on its rerun; 69 failed one assertion of 65 (the spec read the consumer's events while it was stopped — fixed) and passed 62 of 62 on its rerun.

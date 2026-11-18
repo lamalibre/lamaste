@@ -293,8 +293,9 @@ server {
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Not logged in -> Authelia portal
-        error_page 401 =302 https://auth.example.com/?rd=https://myapp.example.com$request_uri;
+        # Not logged in -> Gatekeeper's sign-in redirect to the Authelia portal,
+        # back to this very URL, query included (location = /internal/lamaste/sign-in)
+        error_page 401 = /internal/lamaste/sign-in;
         # Restricted only: no grant -> Gatekeeper's access-request page
         error_page 403 = /internal/lamaste/authz;
     }

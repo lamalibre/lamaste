@@ -287,6 +287,28 @@ test('the rate limit counts per client address and tunnel host — not one bucke
       },
     });
     assert.equal(spoofed.statusCode, 429, 'still 198.51.100.1, the hop nginx added');
+    // No counters on any answer — the sign-in redirect reaches the browser
+    // as it is; a 429 still says when to come back.
+    assert.ok(spoofed.headers['retry-after']);
+    const signIn = await limited.inject({
+      method: 'GET',
+      url: '/authz/sign-in/example.com/apps.example.com',
+      headers: {
+        host: 'apps.example.com',
+        'x-original-url': 'https://apps.example.com/a?b=1&c=2',
+        'x-forwarded-for': '198.51.100.7',
+      },
+    });
+    assert.equal(signIn.statusCode, 302);
+    const allowed = await tunnelCheck('apps.example.com', 'authelia_session=alice', {
+      client: '198.51.100.8',
+      on: limited,
+    });
+    for (const res of [spoofed, signIn, allowed]) {
+      for (const name of Object.keys(res.headers)) {
+        assert.doesNotMatch(name, /^x-ratelimit-/, `${res.statusCode}: ${name}`);
+      }
+    }
   } finally {
     await limited.close();
   }

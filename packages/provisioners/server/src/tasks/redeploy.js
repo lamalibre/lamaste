@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
 import { lookupId } from '../lib/accounts.js';
 import { ensureBackendCookieMap } from '../lib/backend-cookie.js';
+import { ensureRequestPrivacyConf } from '../lib/request-privacy.js';
 import {
   ensureHttpRedirect,
   ensureHttpsDefault,
@@ -28,11 +29,12 @@ import {
 } from '../lib/node-version.js';
 import { assertNginxSubModule } from '../lib/nginx-modules.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
+import { GATEKEEPER_SERVICE, checkGatekeeper, startGatekeeper } from '../lib/gatekeeper-service.js';
 import { deployServerdPackage } from './panel.js';
 import { lamalibreNpmEnv, lamalibreRegistry } from '../lib/registry.js';
 import { autheliaReady } from '@lamalibre/lamaste/server';
 
-const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
+const GATEKEEPER_UNIT = `/etc/systemd/system/${GATEKEEPER_SERVICE}.service`;
 
 async function isActive(service) {
   try {
@@ -133,6 +135,21 @@ export function redeployTasks(ctx, task) {
         subtask.output = changed
           ? 'nginx map installed: backends never receive the authelia_session cookie'
           : 'nginx map already in place';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Keeping queries out of the access log and Authelia',
+      task: async (_ctx, subtask) => {
+        // Also while the running panel is untouched: the installer's own
+        // sites refreshed below and every vhost the panel this redeploy
+        // starts re-renders log with `access_log … lamaste_noquery;`, and
+        // the locations that ask Authelia name `$lamaste_request_path` —
+        // nginx refuses both without this file. Fatal, as the map above.
+        const { changed } = await ensureRequestPrivacyConf();
+        subtask.output = changed
+          ? 'nginx logs the path of a request, never its query or referrer'
+          : 'nginx log format already in place';
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -300,7 +317,8 @@ export function redeployTasks(ctx, task) {
     {
       title: 'Updating gatekeeper',
       task: async (_ctx, subtask) => {
-        subtask.output = (await deployGatekeeperPackage(vendorDir, installDir))
+        ctx.gatekeeperDeployed = await deployGatekeeperPackage(vendorDir, installDir);
+        subtask.output = ctx.gatekeeperDeployed
           ? 'Gatekeeper updated'
           : 'Gatekeeper not bundled — skipping';
       },
@@ -459,9 +477,20 @@ export function redeployTasks(ctx, task) {
             );
           }
         }
-        if (ctx.gatekeeperWasActive) {
+        // Gatekeeper is started whenever it is installed — not only when it
+        // was running before. Every authenticated or restricted tunnel, every
+        // web-surface shell and every page's sign-in redirect asks it, so a
+        // relay whose Gatekeeper is installed but stopped answers those with
+        // errors: no state of the relay wants it down. (The guard copied
+        // Authelia's, which is not running before onboarding; Gatekeeper is
+        // enabled and started by every fresh install.) Best effort and before
+        // the panel, which talks to it: nothing here may keep the panel from
+        // starting — the last step checks and reports (lib/gatekeeper-service.js).
+        // A masked unit is left alone; a relay that predates Gatekeeper has
+        // no unit and is left as it is.
+        if ((ctx.gatekeeperDeployed || ctx.gatekeeperWasActive) && existsSync(GATEKEEPER_UNIT)) {
           subtask.output = 'Starting gatekeeper...';
-          await execa('systemctl', ['start', GATEKEEPER_SERVICE]);
+          ctx.gatekeeperStart = await startGatekeeper();
         }
 
         subtask.output = 'Starting lamalibre-lamaste-serverd...';
@@ -516,6 +545,19 @@ export function redeployTasks(ctx, task) {
         // coreutils rm: does not follow symlinks the old (lamaste-owned) tree holds.
         await removeTree(ctx.previousInstallDir);
         subtask.output = `Removed ${ctx.previousInstallDir}`;
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Checking gatekeeper',
+      skip: () => (ctx.gatekeeperStart ? false : 'Gatekeeper not installed by this redeploy'),
+      task: async (_ctx, subtask) => {
+        // Last, with the panel serving: a Gatekeeper that is masked, will not
+        // start or does not answer its health check fails this step — the
+        // redeploy ends with that error — and nothing else.
+        const report = await checkGatekeeper(ctx.gatekeeperStart);
+        if (!report.ok) throw new Error(report.message);
+        subtask.output = report.warning ? `${report.message}. ${report.warning}` : report.message;
       },
       rendererOptions: { persistentOutput: true },
     },

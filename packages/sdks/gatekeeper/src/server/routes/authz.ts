@@ -36,6 +36,7 @@ import {
   buildForbiddenPage,
 } from '../../lib/templates.js';
 import { logAccessRequest } from '../routes/diagnostic.js';
+import { autheliaTargetUrl, isAnchoredOn, signInRedirectUrl } from '../../lib/original-url.js';
 import type { AutheliaSession, TemplateOptions, TunnelInfo } from '../../lib/types.js';
 
 /**
@@ -111,7 +112,10 @@ const FORBIDDEN = 'forbidden';
  * Ask Authelia's verify endpoint about one session cookie for one URL, and
  * take the identity headers from its answer — or {@link FORBIDDEN} when it
  * refused a valid session for that URL. Authelia is sent that cookie alone
- * (`authelia_session=<value>`), never the browser's others.
+ * (`authelia_session=<value>`), never the browser's others, and the URL
+ * without its query ({@link autheliaTargetUrl}): Authelia logs the URL of
+ * every refusal, and decides by host alone. Callers keep the whole URL for
+ * their own checks.
  */
 async function validateWithAuthelia(
   session: string,
@@ -127,7 +131,7 @@ async function validateWithAuthelia(
       method: 'GET',
       headers: {
         Cookie: `${AUTHELIA_SESSION_COOKIE}=${session}`,
-        'X-Original-URL': originalUrl,
+        'X-Original-URL': autheliaTargetUrl(originalUrl),
         'X-Original-Method': 'GET',
         'X-Forwarded-For': '127.0.0.1',
         'X-Request-ID': requestId,
@@ -252,11 +256,22 @@ export async function authzRoutes(
   fastify: FastifyInstance,
   opts: AuthzRoutesOptions = {},
 ): Promise<void> {
+  // No `x-ratelimit-*` on any answer: the sign-in redirect reaches the
+  // browser as it is, and no client needs the counters. A refusal (429)
+  // still says when to come back (`retry-after`). The plugin replaces, not
+  // merges, a route's header settings, so every header is named.
+  const noCounterHeaders = {
+    'x-ratelimit-limit': false,
+    'x-ratelimit-remaining': false,
+    'x-ratelimit-reset': false,
+  };
   const authzRateLimit = {
     rateLimit: {
       max: opts.rateLimitPerClient ?? AUTHZ_RATE_LIMIT_PER_CLIENT,
       timeWindow: '1 minute',
       keyGenerator: authzRateLimitKey,
+      addHeadersOnExceeding: noCounterHeaders,
+      addHeaders: { ...noCounterHeaders, 'retry-after': true },
     },
   };
 
@@ -426,6 +441,52 @@ export async function authzRoutes(
   );
 
   /**
+   * GET /authz/sign-in/:domain/:fqdn — where a location sends a request
+   * without a session (nginx `error_page 401`): the pages of a tunnel, a
+   * plugin's web-surface shell, an Authelia-protected static site, the
+   * sign-in host's password change and the desktop's
+   * `/api/user-access/authorize`. The vhost names the host's domain and the
+   * host in the path — its generator knows both — and `X-Original-URL` is
+   * nginx's `https://<fqdn>$request_uri`, the request target as the client
+   * sent it. The answer is a 302 to the sign-in of that domain with the
+   * whole URL, query included, encoded as one `rd` (an `&` in the query no
+   * longer ends it; the locations asking Authelia directly tell it the path
+   * alone, so Authelia's own redirect would lose the query).
+   *
+   * Decides nothing, reads no session, reads no projection: 403 when the
+   * host is not the domain or under it, or when `X-Original-URL` or `Host`
+   * names another host than the path (as for every route here).
+   */
+  fastify.get<{ Params: { domain: string; fqdn: string } }>(
+    '/authz/sign-in/:domain/:fqdn',
+    { config: authzRateLimit },
+    async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const { domain, fqdn } = request.params;
+      const refuse = (reason: string): FastifyReply => {
+        request.log.info({ requestId: request.id, reason, fqdn }, 'sign-in redirect refused');
+        return reply.code(403).send();
+      };
+      if (!TUNNEL_FQDN_RE.test(domain) || !TUNNEL_FQDN_RE.test(fqdn)) {
+        return refuse('invalid_host');
+      }
+      const portalDomain = domain.toLowerCase();
+      if (domainOfHost(fqdn, [portalDomain]) !== portalDomain) return refuse('not_under_domain');
+      const originalUrl = request.headers['x-original-url'];
+      if (typeof originalUrl !== 'string') return refuse('missing_original_request');
+      const parsed = parseOriginalUrl(originalUrl);
+      if (!parsed) return refuse('invalid_original_url');
+      const mismatch = hostnameMismatch(request, fqdn, parsed.host);
+      if (mismatch) return refuse(mismatch.reason);
+      if (!isAnchoredOn(originalUrl, fqdn)) return refuse('invalid_original_url');
+      return reply
+        .code(302)
+        .header('Location', signInRedirectUrl(portalDomain, originalUrl))
+        .send();
+    },
+  );
+
+  /**
    * GET /authz/check — what tunnel vhosts written before 4.3 call. They name
    * the tunnel by the client's Host header (`$http_host`), which an
    * absolute-form request line can point at another tunnel than the one
@@ -544,8 +605,8 @@ async function refusedSession(
 }
 
 /**
- * The domain `hostname` is under — of the panel's projection; `hostname`
- * itself when the projection names none for it (or is unreadable).
+ * The domain `hostname` is under, of the panel's projection — or null when
+ * the projection names none for it, or is missing or unreadable.
  */
 function domainShownFor(fastify: FastifyInstance, hostname: string): string | null {
   const index = fastify.getDomains();

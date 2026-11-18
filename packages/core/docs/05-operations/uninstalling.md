@@ -297,6 +297,7 @@ For reference, here is a complete list of everything the installer and onboardin
 - Corresponding symlinks in `/etc/nginx/sites-enabled/`
 - `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`, `lamalibre-lamaste-authz-cache.conf`
 - `/etc/nginx/conf.d/lamalibre-lamaste-backend-cookie.conf` (the map the tunnel vhosts take the backends' `Cookie` from — remove it after the vhosts that use it)
+- `/etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf` (the log format every vhost logs in and the `$lamaste_request_path` map — remove it after the vhosts that use it)
 
 **System configuration:**
 

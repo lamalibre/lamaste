@@ -388,9 +388,24 @@ else
   # Without a session the login redirect returns to this tunnel, not the Host sent.
   PROBE_ANON=$(probe "" "$WITH_AUTHED_HOST")
   assert_contains "$PROBE_ANON" "HTTP_STATUS=302" "Anonymous request is sent to the login portal" || true
-  assert_contains "$PROBE_ANON" "rd=https://${TUNNEL_FQDN}/index.html" \
+  assert_contains "$PROBE_ANON" "rd=https%3A%2F%2F${TUNNEL_FQDN}%2Findex.html" \
     "Login redirect returns to ${TUNNEL_FQDN}, not the Host header" || true
 fi
+
+# ---------------------------------------------------------------------------
+log_section "Step 8c: The sign-in redirect returns to the whole URL, query and all"
+# ---------------------------------------------------------------------------
+# Gatekeeper's sign-in redirect encodes the original URL as one rd: a second
+# query parameter is no longer cut off at its `&`.
+QUERY_URL="https://${TUNNEL_FQDN}/index.html?a=1&b=2"
+QUERY_LOCATION=$(visitor_exec "curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 '${QUERY_URL}' 2>/dev/null" || echo "")
+QUERY_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 '${QUERY_URL}' 2>/dev/null" || echo "000")
+assert_eq "$QUERY_STATUS" "302" "An anonymous request with a query is sent to the sign-in (302)" || true
+assert_contains "$QUERY_LOCATION" "https://auth.${TEST_DOMAIN}/?rd=" "…at the portal of the tunnel's domain" || true
+QUERY_RD_ENCODED="${QUERY_LOCATION#*rd=}"
+QUERY_RD_ENCODED="${QUERY_RD_ENCODED%%&*}"
+QUERY_RD=$(printf '%b' "${QUERY_RD_ENCODED//%/\\x}")
+assert_eq "$QUERY_RD" "$QUERY_URL" "rd, decoded once, is the whole URL with both parameters" || true
 
 # ---------------------------------------------------------------------------
 log_section "Step 9: Revoke testuser's grant → previously-allowed user 403"

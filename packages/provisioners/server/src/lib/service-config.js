@@ -3,7 +3,11 @@
  * Used by both the full installer (panel.js) and the redeploy flow (redeploy.js).
  */
 
-import { HTTPS_CATCH_ALL_SITE, renderHttpsCatchAllVhost } from '@lamalibre/lamaste';
+import {
+  ACCESS_LOG_DIRECTIVE,
+  HTTPS_CATCH_ALL_SITE,
+  renderHttpsCatchAllVhost,
+} from '@lamalibre/lamaste';
 
 /**
  * Generate the lamalibre-lamaste-serverd systemd service unit content.
@@ -458,11 +462,16 @@ export const HTTP_REDIRECT_SITE = 'lamalibre-lamaste-http-redirect';
  * path ahead of the redirect, and restores the file afterwards — verified
  * on Ubuntu 24.04 (nginx 1.24, certbot 2.9) for new names, names with an
  * existing 443 block, multi-name lineages, and forced renewals.
+ *
+ * It logs as every server block of the relay does (core
+ * `ACCESS_LOG_DIRECTIVE`: the path, never the query — a redirect's query is
+ * the one it hands on).
  */
 export function generateHttpRedirectVhost() {
   return `# Managed by Lamaste — plain HTTP is redirected to HTTPS.
 server {
     listen 80 default_server;
+    ${ACCESS_LOG_DIRECTIVE}
     server_name _;
     return 301 https://$host$request_uri;
 }

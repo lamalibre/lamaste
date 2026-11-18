@@ -289,8 +289,9 @@ location /authelia {
     proxy_pass http://127.0.0.1:9091/api/verify?rd=https://auth.example.com/;
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
-    # This vhost's own hostname, never $http_host (see below)
-    proxy_set_header X-Original-URL https://app.example.com$request_uri;
+    # This vhost's own hostname, never $http_host (see below) — and the path
+    # alone: Authelia logs the URL of a refusal, and decides by host
+    proxy_set_header X-Original-URL https://app.example.com$lamaste_request_path;
     proxy_set_header X-Forwarded-Method $request_method;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host app.example.com;
@@ -314,8 +315,10 @@ location / {
     proxy_pass http://127.0.0.1:PORT;
 }
 
-# Unauthenticated users are redirected to Authelia
-error_page 401 =302 https://auth.example.com/?rd=https://app.example.com$request_uri;
+# Unauthenticated users are redirected to Authelia: Gatekeeper's sign-in
+# redirect (location = /internal/lamaste/sign-in) carries the whole URL,
+# query included and encoded, as rd
+error_page 401 = /internal/lamaste/sign-in;
 ```
 
 Authelia decides by the URL it is asked about, so the vhost writes its own hostname into it. `$http_host` — the client's `Host` header — would let a client send the request line of this vhost (`GET https://app.example.com/ HTTP/1.1`, which nginx uses to select the vhost) with the `Host` of a hostname its rules allow, and be let in here. Lamaste's generated vhosts do this; see [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname).
@@ -329,7 +332,7 @@ The flow works like this:
    a. Cookie present and valid → returns 200 with user headers
    b. No cookie or expired → returns 401
 4. If 200: nginx proxies to the app with Remote-User/Groups/Name/Email headers
-5. If 401: nginx redirects to auth.example.com with the original URL as ?rd= parameter
+5. If 401: nginx sends the request to its sign-in location; Gatekeeper redirects to auth.example.com with the whole original URL, encoded, as the ?rd= parameter
 6. User authenticates on Authelia portal
 7. Authelia sets session cookie and redirects back to the original URL
 8. On the redirect, step 3a succeeds and the user sees the app

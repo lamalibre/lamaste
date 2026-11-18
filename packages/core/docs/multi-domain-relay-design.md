@@ -727,9 +727,9 @@ Fixed on the way:
   application (spec 48). Gatekeeper now names the refusal in
   `X-Lamalibre-Refusal` (`not_a_member`, else `forbidden`) on the one
   decision it makes; the user-surface locations capture it
-  (`auth_request_set $lamaste_refusal …`) and send a 403 to
+  (`auth_request_set $user_surface_refusal …`) and send a 403 to
   `/internal/lamaste/user-surface-403`, which answers one of two fixed JSON
-  bodies (`if ($lamaste_refusal = not_a_member)`, else `forbidden`) —
+  bodies (`if ($user_surface_refusal = not_a_member)`, else `forbidden`) —
   Gatekeeper is never asked twice. `lamaste-priv` allows `default_type` (a
   media type) in a location for it. Tests: Gatekeeper authz-user-surface,
   serverd nginx-vhosts, lamaste-priv.
