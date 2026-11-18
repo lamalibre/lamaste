@@ -17,7 +17,9 @@ Tests: three-VM spec 71 (written, not yet run): a desktop client on a plugin's s
 
 Tests: core and serverd `agent-half-contract.test.js` (the path, protocol 4, the spec, `agentHalfOf`, the preview, the digest written out by hand with and without a key directory), `agent-half-staging.test.js` (auto-approve withheld when one is added, not when one is given up), agent CLI `lamaste-apphost.test.js` (the spec line, the unit, install, activate across versions with and without one, made again when gone, kept on remove, purged through its own trash, a failed install taking it back, no takeover without an owner record, the twin paths, the spec line the agent sends). Three-VM spec 70 (written, not yet run): a half without a key directory, an update that asks for one (withheld from auto-approve, then approved), the directory as made and as systemd applies the unit, the key kept on unhosting and found again, and deleted by a purge.
 
-## [Unreleased] — 4.14.3 candidate
+## [4.14.3] - 2026-11-18
+
+Run on rodeo 2026-11-17/18 on fresh VMs, the candidate on a development Feria only: upgrade `01` from the released 4.14.2 tarballs 122 of 122, three-VM 69 of 69 (3847 assertions, spec 20's old skip), single-VM 43 of 43 (2133, the 5 old one-VM skips).
 
 ### Security
 
