@@ -235,7 +235,10 @@ refused_at_authorization() {
   local loc
   pkce_pair
   loc=$(desktop_authorize "${CLIENT_DESK}" "$1" "$(openssl rand -hex 12)")
-  [[ "$loc" != "$1"* ]] && [[ "$loc" != *"code="* ]]
+  if [[ "$loc" == "$1"* ]] || [[ "$loc" == *"code="* ]]; then
+    log_info "Authorization for $1 answered: ${loc%%code=*}" >&2
+    return 1
+  fi
 }
 
 begin_test "71 — Native app: a desktop client (Three-VM)"
@@ -453,6 +456,9 @@ assert_contains "$(json_get "$(body_of "$RESP")" '.error')" "desktop" "…the re
 
 if wait_for 120 native_client_known "${CLIENT_MOBILE}" "${FQDN}"; then
   log_pass "Authelia knows the mobile client too"
+  # Adding a client restarts Authelia, whose sessions live in memory: the
+  # person signs in to Authelia again, as the app's browser shows.
+  assert_eq "$(sign_in "${PERSON}" "${PERSON_PASSWORD}" "${SECRET}" "${JAR}" "${FQDN}")" "OK OK" "${PERSON} signs in to Authelia again (it restarted)" || true
 else
   log_fail "Authelia does not know ${CLIENT_MOBILE}"
 fi

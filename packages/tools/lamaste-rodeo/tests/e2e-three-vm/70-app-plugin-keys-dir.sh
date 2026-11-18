@@ -115,7 +115,7 @@ AUTO=$(host_api_call PUT "plugins/${PLUGIN}/hooks/auto-approve" '{"enabled":true
 assert_eq "$(status_of "$AUTO")" "200" "Auto-approve is on for ${PLUGIN}" || true
 UPDATE=$(host_api_post "plugins/${PLUGIN}/update" '{"version":"1.1.0"}')
 assert_json_field "$UPDATE" '.pendingUpdate.version' '1.1.0' "The update waits for an administrator despite auto-approve" || true
-assert_json_field "$UPDATE" '.pendingUpdate.autoApproveWithheld' '["it asks for a key directory on its agent (app host helper protocol 4)"]' "…withheld: it asks for a key directory" || true
+assert_json_field "$UPDATE" '.pendingUpdate.autoApproveWithheld | tojson' '["it asks for a key directory on its agent (app host helper protocol 4)"]' "…withheld: it asks for a key directory" || true
 assert_json_field "$UPDATE" '.pendingUpdate.agentHalf.keysDir' "${KEYS_DIR}" "The pending update shows the key directory it asks for" || true
 assert_eq "$(audit_count "${PLUGIN}" hooks.auto-approve.withheld '.codes | index("agent-half.keys-dir") != null')" "1" "Audit: hooks.auto-approve.withheld, code agent-half.keys-dir" || true
 assert_json_field "$(host_api_get "plugins/${PLUGIN}")" '.plugin.version' '1.0.0' "Until it is approved, 1.0.0 stays" || true
@@ -159,7 +159,7 @@ assert_json_field "$OP" '.status' 'succeeded' "The unhosting succeeded ($(json_g
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$FACTS" '.unit.file' 'false' "Unhosted: no unit" || true
 assert_json_field "$FACTS" '.keys.dir | "\(.mode) \(.user)"' "700 ${SERVICE_USER}" "Unhosted: the key directory stays, still the account's" || true
-assert_json_field "$FACTS" '.keys.files | keys' '["link-key.json"]' "…with the key in it" || true
+assert_json_field "$FACTS" '.keys.files | keys | tojson' '["link-key.json"]' "…with the key in it" || true
 assert_json_field "$FACTS" '.data.state.instance' "${INSTANCE}" "…and the data directory beside it" || true
 RETAINED=$(host_api_get "plugins/${PLUGIN}/retained-data")
 assert_json_field "$RETAINED" "[.retainedData[]? | select(.agentLabel == \"${HOST_AGENT_LABEL}\") | .keysDir] | first" "${KEYS_DIR}" "The relay's retained-data record names the key directory a purge deletes" || true

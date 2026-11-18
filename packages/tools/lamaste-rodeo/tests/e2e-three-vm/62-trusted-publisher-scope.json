@@ -1000,7 +1000,7 @@
       "steps": [
         {
           "id": "step-74",
-          "label": "Host facts: the helper speaks protocol 3 (any trusted scope)",
+          "label": "Host facts: the helper speaks protocol 3 or later (any trusted scope)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1011,12 +1011,12 @@
                 "kind": "expr",
                 "template": "$(agent_host_facts)"
               },
-              "path": ".apphost.version",
+              "path": ".apphost.version >= 3",
               "expected": {
                 "kind": "literal",
-                "value": "3"
+                "value": "true"
               },
-              "message": "Host facts: the helper speaks protocol 3 (any trusted scope)"
+              "message": "Host facts: the helper speaks protocol 3 or later (any trusted scope)"
             }
           }
         },
@@ -1374,7 +1374,7 @@
           }
         }
       ],
-      "bash": "log_section \"Hosted through the app host helper (protocol 3)\"\n\nensure_app_host_helper\nassert_json_field \"$(agent_host_facts)\" '.apphost.version' '3' \"Host facts: the helper speaks protocol 3 (any trusted scope)\" || true\nELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$ELIGIBILITY\" '\"\\(.eligible) \\(.reasons | length)\"' 'true 0' \"Eligibility: ${HOST_AGENT_LABEL} can host it\" || true\n\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nassert_json_field \"${PUSH_WINDOW_RESPONSE}\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming ${AGENT_PACKAGE}\" || true\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"done\" \"Step: install the agent half\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"The agent half runs on the agent VM\" || true\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"…as ${SERVICE_USER}\" || true\nOWNER=$(agent_exec \"cat /var/lib/lamalibre/apps/.owners/${PLUGIN}.json\" 2>/dev/null || echo '{}')\nassert_json_field \"$OWNER\" '.package' \"${AGENT_PACKAGE}\" \"The app host helper records ${AGENT_PACKAGE} as the route's owner\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.pong) \\(.version) \\(.user)\"' \"true 1.0.0 ${SERVICE_USER}\" \"GET /api/${PLUGIN}/ping reaches the installed version through the tunnel\" || true\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -r \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\")\nassert_eq \"$REQUESTS\" \"agent:${HOST_AGENT_LABEL}\" \"The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)\" || true\n\n# ===========================================================================\n# 4. In use: not removable; uninstalled: removed, refused again\n# ==========================================================================="
+      "bash": "log_section \"Hosted through the app host helper (protocol 3)\"\n\nensure_app_host_helper\nassert_json_field \"$(agent_host_facts)\" '.apphost.version >= 3' 'true' \"Host facts: the helper speaks protocol 3 or later (any trusted scope)\" || true\nELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$ELIGIBILITY\" '\"\\(.eligible) \\(.reasons | length)\"' 'true 0' \"Eligibility: ${HOST_AGENT_LABEL} can host it\" || true\n\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'\nassert_json_field \"${PUSH_WINDOW_RESPONSE}\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming ${AGENT_PACKAGE}\" || true\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"done\" \"Step: install the agent half\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"The agent half runs on the agent VM\" || true\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"…as ${SERVICE_USER}\" || true\nOWNER=$(agent_exec \"cat /var/lib/lamalibre/apps/.owners/${PLUGIN}.json\" 2>/dev/null || echo '{}')\nassert_json_field \"$OWNER\" '.package' \"${AGENT_PACKAGE}\" \"The app host helper records ${AGENT_PACKAGE} as the route's owner\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.pong) \\(.version) \\(.user)\"' \"true 1.0.0 ${SERVICE_USER}\" \"GET /api/${PLUGIN}/ping reaches the installed version through the tunnel\" || true\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -r \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/e2e-scoped-agent-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" 2>/dev/null || echo \"\")\nassert_eq \"$REQUESTS\" \"agent:${HOST_AGENT_LABEL}\" \"The agent pulled ${AGENT_PACKAGE} from the relay's registry with its brokered token (${SCOPE} routed there)\" || true\n\n# ===========================================================================\n# 4. In use: not removable; uninstalled: removed, refused again\n# ==========================================================================="
     },
     {
       "id": "in-use-the-scope-stays-trusted-the-registry-stays-configured",

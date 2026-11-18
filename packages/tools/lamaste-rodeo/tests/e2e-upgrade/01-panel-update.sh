@@ -601,7 +601,11 @@ assert_not_eq "${ON_STATUS:-000}" "000" "The enabled tunnel ${ON_FQDN} still com
 
 log_section "Every enabled vhost logs the path without its query"
 
-assert_not_eq "${QUERY_VHOSTS_BEFORE}" "" "Before the update, the previous release's vhosts logged queries (${QUERY_VHOSTS_BEFORE})" || true
+if version_before "${BEFORE_VERSION}" "4.14.3"; then
+  assert_not_eq "${QUERY_VHOSTS_BEFORE}" "" "Before the update, the previous release's vhosts logged queries (${QUERY_VHOSTS_BEFORE})" || true
+else
+  assert_eq "${QUERY_VHOSTS_BEFORE}" "" "Before the update, no vhost of the previous release (${BEFORE_VERSION}) logged queries" || true
+fi
 assert_contains "$(sudo cat /etc/nginx/conf.d/lamalibre-lamaste-request-privacy.conf 2>/dev/null || echo "")" "log_format lamaste_noquery" "The update installed the http-level file defining lamaste_noquery" || true
 assert_eq "$(vhosts_logging_queries)" "" "No enabled lamalibre-lamaste-* vhost logs queries any more" || true
 PROBE="probe${RANDOM}${RANDOM}"
